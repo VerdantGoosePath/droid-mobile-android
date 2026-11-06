@@ -1,0 +1,27 @@
+name: Update cryptography lockfile
+on:
+  push:
+    branches: [feat/factory-relay-remote-control]
+    paths: [.github/workflows/crypto-lockfile.yml]
+permissions:
+  contents: write
+jobs:
+  update-lock:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Resolve libsodium-sumo dependency and commit lockfile
+        run: |
+          set -euo pipefail
+          npm uninstall libsodium-wrappers --workspace @droidmobile/daemon-client --ignore-scripts
+          npm install --save-exact libsodium-wrappers-sumo@0.8.4 --workspace @droidmobile/daemon-client --package-lock=true --ignore-scripts
+          git config user.name "droid-mobile[bot]"
+          git config user.email "droid-mobile[bot]@users.noreply.github.com"
+          git add package-lock.json packages/daemon-client/package.json
+          git diff --cached --quiet || git commit -m "build(crypto): include complete libsodium-sumo primitives"
+          git push origin HEAD:feat/factory-relay-remote-control
