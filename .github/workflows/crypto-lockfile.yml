@@ -24,4 +24,6 @@ jobs:
           git config user.email "droid-mobile[bot]@users.noreply.github.com"
           git add package-lock.json packages/daemon-client/package.json
           git diff --cached --quiet || git commit -m "build(crypto): include complete libsodium-sumo primitives"
+          git fetch origin feat/factory-relay-remote-control
+          git rebase origin/feat/factory-relay-remote-control
           git push origin HEAD:feat/factory-relay-remote-control
