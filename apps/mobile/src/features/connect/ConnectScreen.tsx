@@ -12,6 +12,7 @@ import { qrScanner } from '../../platform/qrScanner';
 import type { QrScanResult } from '../../platform/qrScanner';
 import { readClipboardText } from '../terminal/clipboard';
 import { normalizePairingInput, parsePairingCode } from './pairing';
+import { factoryRelayTarget } from '@droidmobile/daemon-client';
 import { listFactoryComputers } from './computers';
 import type { FactoryComputer } from './computers';
 import type { PairingPayload } from './pairing';
@@ -312,8 +313,8 @@ export function ConnectScreen() {
               ))}
             </div>
           )}
-          {computers.some((computer) => computer.hasComputerIdentity) ? (
-            <p className="field__description" role="note">{t('connect.relaySecurityNote')}</p>
+          {(factoryRelayTarget(url) !== null || computers.some((computer) => computer.hasComputerIdentity)) ? (
+            <p className="field__description" role="alert">{t('connect.relaySecurityNote')}</p>
           ) : null}
         </div>
         {errorKey ? (
