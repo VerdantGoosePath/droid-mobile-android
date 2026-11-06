@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, it } from 'vitest';
-import sodium from 'libsodium-wrappers';
+import sodium from 'libsodium-wrappers-sumo';
 import {
   SecureRpcChannel, validatePinnedIdentity,
 } from './secure-channel';
