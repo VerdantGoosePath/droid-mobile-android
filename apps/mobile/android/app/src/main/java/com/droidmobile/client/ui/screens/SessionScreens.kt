@@ -23,6 +23,10 @@ import androidx.compose.ui.unit.dp
 import com.droidmobile.client.backend.DroidState
 import com.droidmobile.client.backend.DroidViewModel
 import com.droidmobile.client.ui.theme.DroidTokens
+import com.droidmobile.client.ui.components.DroidEmptyState
+import com.droidmobile.client.ui.components.DroidLoadingState
+import com.droidmobile.client.ui.components.StatusPill
+import com.droidmobile.client.ui.components.InlineError
 import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
@@ -32,16 +36,15 @@ fun SessionListScreen(vm: DroidViewModel, state: DroidState, open: (String) -> U
     var search by remember { mutableStateOf("") }
     var showNew by remember { mutableStateOf(false) }
     var selected by remember { mutableStateOf<JSONObject?>(null) }
+    var archiveTarget by remember { mutableStateOf<JSONObject?>(null) }
     LaunchedEffect(Unit) { vm.refreshSessions() }
     Column(Modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().padding(DroidTokens.contentPadding),
             horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            Column {
-                Text("Sessions", style = MaterialTheme.typography.headlineLarge)
-                Text("${state.sessions.size} conversations",
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
+            Text("${state.sessions.size} conversation${if (state.sessions.size == 1) "" else "s"}",
+                modifier = Modifier.weight(1f),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
             Row {
                 IconButton(onClick = { vm.refreshSessions() }) {
                     Icon(Icons.Filled.Refresh, "Refresh sessions")
@@ -57,8 +60,18 @@ fun SessionListScreen(vm: DroidViewModel, state: DroidState, open: (String) -> U
             label = { Text("Search sessions") }, singleLine = true
         )
         Spacer(Modifier.height(12.dp))
-        LazyColumn(contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+        LazyColumn(modifier = Modifier.weight(1f),
+            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 16.dp),
             verticalArrangement = Arrangement.spacedBy(9.dp)) {
+            if (state.sessions.isEmpty()) item {
+                DroidEmptyState(
+                    title = "No sessions yet",
+                    supportingText = "Create your first session to start working with Droid.",
+                    modifier = Modifier.height(350.dp),
+                    actionLabel = "New session",
+                    onAction = { showNew = true }
+                )
+            }
             items(
                 state.sessions.filter {
                     search.isBlank() ||
@@ -66,7 +79,10 @@ fun SessionListScreen(vm: DroidViewModel, state: DroidState, open: (String) -> U
                         it.optString("cwd").contains(search, true)
                 }, key = { it.optString("id") }
             ) { session ->
-                ElevatedCard(onClick = { open(session.optString("id")) }) {
+                Card(onClick = { open(session.optString("id")) },
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceContainerLow
+                    ), shape = MaterialTheme.shapes.large) {
                     Column(Modifier.fillMaxWidth().padding(18.dp)) {
                         Text(session.optString("title").ifBlank { "Untitled session" },
                             style = MaterialTheme.typography.titleMedium)
@@ -74,8 +90,7 @@ fun SessionListScreen(vm: DroidViewModel, state: DroidState, open: (String) -> U
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            AssistChip(onClick = { open(session.optString("id")) },
-                                label = { Text(session.optString("status").ifBlank { "Open" }) })
+                            StatusPill(session.optString("status").ifBlank { "Open" })
                             Spacer(Modifier.weight(1f))
                             TextButton(onClick = { selected = session }) { Text("Manage") }
                         }
@@ -101,14 +116,33 @@ fun SessionListScreen(vm: DroidViewModel, state: DroidState, open: (String) -> U
                 TextButton(onClick = {
                     vm.action("sessions.rename", JSONObject().put("id", session.optString("id")).put("title", title))
                     vm.refreshSessions(); selected = null
-                }) { Text("Rename") }
+                }) { Text("Save name") }
             },
             dismissButton = {
-                TextButton(onClick = {
-                    vm.action("sessions.archive", JSONObject().put("id", session.optString("id")))
-                    vm.refreshSessions(); selected = null
-                }) { Text("Archive") }
+                Row {
+                    TextButton(onClick = {
+                        archiveTarget = session
+                        selected = null
+                    }) { Text("Archive") }
+                    TextButton(onClick = { selected = null }) { Text("Cancel") }
+                }
             }
+        )
+    }
+    if (archiveTarget != null) {
+        val target = archiveTarget!!
+        AlertDialog(
+            onDismissRequest = { archiveTarget = null },
+            title = { Text("Archive session?") },
+            text = { Text("The session will be removed from your active list. You can restore it later.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    vm.action("sessions.archive", JSONObject().put("id", target.optString("id")))
+                    vm.refreshSessions()
+                    archiveTarget = null
+                }) { Text("Archive") }
+            },
+            dismissButton = { TextButton(onClick = { archiveTarget = null }) { Text("Keep session") } }
         )
     }
     if (showNew) NewSessionSheet(vm, onDismiss = { showNew = false }, onCreate = { id ->
@@ -133,16 +167,28 @@ private fun NewSessionSheet(vm: DroidViewModel, onDismiss: () -> Unit, onCreate:
             OutlinedTextField(value = cwd, onValueChange = { cwd = it },
                 modifier = Modifier.fillMaxWidth(), label = { Text("Working directory on PC") },
                 singleLine = true)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf("auto", "spec", "mission").forEach { choice ->
-                    FilterChip(selected = mode == choice, onClick = { mode = choice },
-                        label = { Text(choice.replaceFirstChar { it.uppercase() }) })
+            Text("Interaction mode", style = MaterialTheme.typography.labelLarge)
+            SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                listOf("auto", "spec", "mission").forEachIndexed { index, choice ->
+                    SegmentedButton(
+                        selected = mode == choice,
+                        onClick = { mode = choice },
+                        shape = SegmentedButtonDefaults.itemShape(index, 3),
+                        label = { Text(choice.replaceFirstChar { it.uppercase() }) }
+                    )
                 }
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Autonomy", style = MaterialTheme.typography.labelLarge)
+            androidx.compose.foundation.layout.FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
                 listOf("default", "low", "medium", "high").forEach { choice ->
-                    FilterChip(selected = autonomy == choice, onClick = { autonomy = choice },
-                        label = { Text(choice) })
+                    FilterChip(
+                        selected = autonomy == choice,
+                        onClick = { autonomy = choice },
+                        label = { Text(choice.replaceFirstChar { it.uppercase() }) }
+                    )
                 }
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -192,33 +238,37 @@ fun SessionDetailScreen(vm: DroidViewModel, state: DroidState, id: String, onBac
         if (count > 0) listState.animateScrollToItem(count - 1)
     }
     Column(Modifier.fillMaxSize()) {
-        Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
-            Column(Modifier.weight(1f)) {
-                Text("Droid session", style = MaterialTheme.typography.titleLarge)
-                Text(id.take(12), style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("Session ${id.take(8)}",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
             TextButton(onClick = { showSettings = true }) { Text("Options") }
         }
-        SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth().padding(horizontal = 18.dp)) {
-            listOf("chat", "mission", "context").forEachIndexed { index, choice ->
-                SegmentedButton(
-                    selected = tab == choice, onClick = { tab = choice },
-                    shape = SegmentedButtonDefaults.itemShape(index, 3),
-                    label = { Text(choice.replaceFirstChar { it.uppercase() }) }
+        PrimaryTabRow(selectedTabIndex = listOf("chat", "mission", "context").indexOf(tab)) {
+            listOf("chat", "mission", "context").forEach { choice ->
+                Tab(
+                    selected = tab == choice,
+                    onClick = { tab = choice },
+                    text = { Text(choice.replaceFirstChar { it.uppercase() }) }
                 )
             }
         }
         when (tab) {
             "mission" -> {
                 LaunchedEffect(id) { vm.fetch("mission", "missions.snapshot", JSONObject().put("id", id)) }
-                StructuredDataPanel(state.sections["mission"])
+                if (state.sections["mission"] == null)
+                    DroidLoadingState("Loading mission…")
+                else StructuredDataPanel(state.sections["mission"])
             }
             "context" -> {
                 LaunchedEffect(id) { vm.fetch("context", "sessions.context", JSONObject().put("id", id)) }
-                StructuredDataPanel(state.sections["context"])
+                if (state.sections["context"] == null)
+                    DroidLoadingState("Calculating context usage…")
+                else StructuredDataPanel(state.sections["context"])
             }
             else -> {
                 LazyColumn(
@@ -252,9 +302,11 @@ fun SessionDetailScreen(vm: DroidViewModel, state: DroidState, id: String, onBac
                         enabled = draft.isNotBlank() && !state.streaming,
                         onClick = { vm.send(draft); draft = "" }
                     ) { Icon(Icons.Filled.Send, "Send") }
-                    if (state.streaming) TextButton(onClick = {
-                        vm.action("sessions.interrupt", JSONObject().put("id", id))
-                    }) { Text("Stop") }
+                    if (state.streaming) {
+                        TextButton(onClick = {
+                            vm.action("sessions.interrupt", JSONObject().put("id", id))
+                        }) { Text("Stop") }
+                    }
                 }
             }
         }
