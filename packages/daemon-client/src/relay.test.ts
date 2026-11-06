@@ -140,7 +140,9 @@ describe('Relay/Noise transport ordering and fail-closed policy', () => {
     native.receive(new TextEncoder().encode('{"result":"ok"}'));
     await vi.waitFor(() =>
       expect(onMessage.mock.calls.length + onError.mock.calls.length).toBeGreaterThan(0));
-    expect(onError).not.toHaveBeenCalled();
+    expect(onError.mock.calls.map(([ev]) => ({
+      type: ev.type, readyState: socket.readyState, nativeReadyState: native.readyState,
+    }))).toEqual([]);
     expect(onMessage).toHaveBeenCalledTimes(1);
   });
 
