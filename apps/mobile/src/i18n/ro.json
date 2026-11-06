@@ -58,7 +58,7 @@
     "findingComputers": "Se caută computerele…",
     "computersError": "Nu s-au putut încărca computerele Factory. Verifică cheia API și conexiunea.",
     "computersList": "Computere Factory înregistrate",
-    "relaySecurityNote": "Factory anunță o identitate securizată a computerului. Acest client experimental folosește TLS, dar nu implementează încă negocierea oficială a canalului criptat cap-la-cap."
+    "relaySecurityNote": "Factory Remote Control folosește un canal criptat cap-la-cap, cu identitatea X25519 verificată a computerului. Această integrare rămâne experimentală până la testarea cu un dispozitiv real."
   },
   "pairLink": {
     "title": "Te asociezi cu acest daemon?",
