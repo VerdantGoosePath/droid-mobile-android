@@ -1,28 +1,28 @@
 /**
- * Factory-hosted Remote Control transport.
+ * Authenticated and pinned Factory Remote Control WebSocket adapter.
  *
- * The public Computers API supplies relayClientUrl; the CLI's --remote-control
- * output prints relayAgentUrl instead. They are different halves of the relay.
+ * Relay authentication (text) precedes Noise secure-channel negotiation
+ * (binary), which precedes application JSON-RPC (encrypted binary records).
+ * The public SDK sees a WebSocket open ONLY after the pinned Noise handshake.
  *
- * The SDK's high-level facade presently only offers direct daemon WebSocket
- * connections. This adapter preserves that facade by making a Factory relay
- * socket look open only AFTER its separate relay.authenticate exchange.
- * The SDK then performs daemon.authenticate on the same socket.
- *
- * No API key is ever added to a URL or placed in persistent web storage.
- * No TLS or secure-channel errors are bypassed.
+ * Fail closed: never dispatch unencrypted application frames.
  */
+import type { PinnedComputerIdentity } from './secure-channel';
+import type { SecureRpcChannel } from './secure-channel';
+
 const RELAY_HOSTS = new Set(['relay.factory.ai', 'relay.eu.factory.ai']);
 const REMOTE_PATH =
   /^\/v0\/computer\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/(agent|client)\/?$/i;
 const AUTH_TIMEOUT_MS = 10_000;
+const SECURE_TIMEOUT_MS = 10_000;
+const MAX_FRAME_BYTES = 8 * 1024 * 1024;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export interface FactoryRelayTarget {
   url: string;
   computerId: string;
 }
 
-/** Convert a printed /agent address into the client-side endpoint. */
 export function factoryRelayTarget(address: string): FactoryRelayTarget | null {
   try {
     const parsed = new URL(address.trim());
@@ -34,14 +34,12 @@ export function factoryRelayTarget(address: string): FactoryRelayTarget | null {
       parsed.password ||
       parsed.search ||
       parsed.hash
-    ) {
-      return null;
-    }
+    ) return null;
     const match = REMOTE_PATH.exec(parsed.pathname);
     if (!match) return null;
     const computerId = match[1].toLowerCase();
     return {
-      url: `wss://${parsed.hostname.toLowerCase()}/v0/computer/${computerId}/client`,
+      url: 'wss://' + parsed.hostname.toLowerCase() + '/v0/computer/' + computerId + '/client',
       computerId,
     };
   } catch {
@@ -49,88 +47,115 @@ export function factoryRelayTarget(address: string): FactoryRelayTarget | null {
   }
 }
 
-type RelayAuthMessage =
-  | { type: 'relay.auth_ok'; clientId?: string }
-  | { type: 'relay.auth_error'; code?: string; message?: string };
+type NativeSocket = typeof WebSocket;
+type Phase = 'relay' | 'loading-crypto' | 'secure-hello' | 'ready' | 'closed';
+interface Credential {
+  apiKey: string;
+  identity: PinnedComputerIdentity;
+  computerId: string;
+}
 
-/** Only these relay frames are consumed; daemon frames flow to the SDK unchanged. */
-function relayAuthResponse(data: unknown): RelayAuthMessage | null {
+function isAuthOk(data: unknown): string | null {
   if (typeof data !== 'string') return null;
   try {
-    const parsed: unknown = JSON.parse(data);
-    if (typeof parsed !== 'object' || parsed === null) return null;
-    const value = parsed as Record<string, unknown>;
-    if (value.type === 'relay.auth_ok') {
-      return { type: 'relay.auth_ok', ...(typeof value.clientId === 'string' ? { clientId: value.clientId } : {}) };
-    }
-    if (value.type === 'relay.auth_error') {
-      return {
-        type: 'relay.auth_error',
-        ...(typeof value.code === 'string' ? { code: value.code } : {}),
-        ...(typeof value.message === 'string' ? { message: value.message } : {}),
-      };
-    }
-    return null;
+    const frame: unknown = JSON.parse(data);
+    if (!frame || typeof frame !== 'object') return null;
+    const value = frame as Record<string, unknown>;
+    return value.type === 'relay.auth_ok' &&
+      typeof value.clientId === 'string' && UUID.test(value.clientId)
+      ? value.clientId : null;
   } catch {
     return null;
   }
 }
 
-type NativeSocket = typeof WebSocket;
+function isFactoryAuthError(data: unknown): boolean {
+  if (typeof data !== 'string') return false;
+  try {
+    const frame: unknown = JSON.parse(data);
+    return !!frame && typeof frame === 'object' &&
+      (frame as Record<string, unknown>).type === 'relay.auth_error';
+  } catch {
+    return false;
+  }
+}
 
-class AuthenticatedRelaySocket extends EventTarget {
+function bytesOf(data: unknown): Uint8Array | null {
+  if (data instanceof ArrayBuffer) return new Uint8Array(data);
+  if (ArrayBuffer.isView(data))
+    return new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+  return null;
+}
+
+/**
+ * Prevent the server from sending compression formats unsupported by the
+ * wrapped SDK message reader. Optional negotiation belongs to daemon auth.
+ */
+function withoutCompressionOffer(message: string): string {
+  try {
+    const parsed: unknown = JSON.parse(message);
+    if (!parsed || typeof parsed !== 'object') return message;
+    const frame = parsed as Record<string, unknown>;
+    if (frame.method !== 'daemon.authenticate') return message;
+    if (!frame.params || typeof frame.params !== 'object') return message;
+    const params = { ...(frame.params as Record<string, unknown>) };
+    delete params.acceptEncodings;
+    return JSON.stringify({ ...frame, params });
+  } catch {
+    return message;
+  }
+}
+
+class SecuredRelaySocket extends EventTarget {
   static readonly CONNECTING = 0;
   static readonly OPEN = 1;
   static readonly CLOSING = 2;
   static readonly CLOSED = 3;
-
   readonly CONNECTING = 0;
   readonly OPEN = 1;
   readonly CLOSING = 2;
   readonly CLOSED = 3;
+
   readonly url: string;
+  readonly raw: WebSocket;
   onopen: ((this: WebSocket, ev: Event) => unknown) | null = null;
-  onclose: ((this: WebSocket, ev: CloseEvent) => unknown) | null = null;
   onerror: ((this: WebSocket, ev: Event) => unknown) | null = null;
   onmessage: ((this: WebSocket, ev: MessageEvent) => unknown) | null = null;
+  onclose: ((this: WebSocket, ev: CloseEvent) => unknown) | null = null;
 
-  private readonly raw: WebSocket;
-  private authenticated = false;
-  private authTimer: ReturnType<typeof setTimeout> | null = null;
+  private phase: Phase = 'relay';
+  private channel: SecureRpcChannel | null = null;
+  private timeout: ReturnType<typeof setTimeout> | null = null;
   private finished = false;
 
-  constructor(target: string, apiKey: string, Native: NativeSocket, protocols?: string | string[]) {
+  constructor(target: FactoryRelayTarget, credential: Credential,
+              Native: NativeSocket, protocols?: string | string[]) {
     super();
-    this.url = target;
-    this.raw = protocols === undefined ? new Native(target) : new Native(target, protocols);
+    this.url = target.url;
+    if (target.computerId !== credential.computerId)
+      throw new Error('Factory computer identity does not match relay URL');
+    if (!credential.identity || credential.identity.algorithm !== 'X25519')
+      throw new Error('Pinned computer X25519 identity is required');
+    this.raw = protocols === undefined
+      ? new Native(target.url)
+      : new Native(target.url, protocols);
+    this.raw.binaryType = 'arraybuffer';
 
     this.raw.addEventListener('open', () => {
+      if (this.finished) return;
+      this.arm(AUTH_TIMEOUT_MS);
       try {
-        // Two-step authentication: relay.authenticate, THEN daemon.authenticate by SDK.
-        this.raw.send(JSON.stringify({ method: 'relay.authenticate', apiKey }));
-        this.authTimer = setTimeout(() => this.abort(), AUTH_TIMEOUT_MS);
+        this.raw.send(JSON.stringify({
+          method: 'relay.authenticate',
+          apiKey: credential.apiKey,
+        }));
       } catch {
         this.abort();
       }
     });
     this.raw.addEventListener('message', (event: MessageEvent) => {
       if (this.finished) return;
-      if (!this.authenticated) {
-        const response = relayAuthResponse(event.data);
-        if (!response) {
-          this.abort();
-          return;
-        }
-        if (response.type === 'relay.auth_error') {
-          this.abort();
-          return;
-        }
-        this.authenticated = true;
-        this.clearTimer();
-        this.emit(new Event('open'));
-        return;
-      }
-      this.emit(new MessageEvent('message', { data: event.data, origin: event.origin }));
+      void this.receive(event.data, credential, target).catch(() => this.abort());
     });
     this.raw.addEventListener('error', () => {
       if (!this.finished) this.emit(new Event('error'));
@@ -138,110 +163,188 @@ class AuthenticatedRelaySocket extends EventTarget {
     this.raw.addEventListener('close', (event: CloseEvent) => {
       if (this.finished) return;
       this.finished = true;
-      this.clearTimer();
-      this.emit(new CloseEvent('close', { code: event.code, reason: event.reason, wasClean: event.wasClean }));
+      this.phase = 'closed';
+      this.clearTimeout();
+      this.channel?.destroy();
+      this.channel = null;
+      this.emit(new CloseEvent('close', {
+        code: event.code, reason: event.reason, wasClean: event.wasClean,
+      }));
     });
+  }
+
+  private arm(ms: number): void {
+    this.clearTimeout();
+    this.timeout = setTimeout(() => this.abort(), ms);
+  }
+  private clearTimeout(): void {
+    if (this.timeout !== null) clearTimeout(this.timeout);
+    this.timeout = null;
   }
 
   private emit(event: Event): void {
     super.dispatchEvent(event);
     const callbacks = {
       open: this.onopen,
-      close: this.onclose,
       error: this.onerror,
       message: this.onmessage,
-    } as Record<string, ((this: WebSocket, event: Event) => unknown) | null>;
+      close: this.onclose,
+    } as Record<string, ((this: WebSocket, ev: Event) => unknown) | null>;
     callbacks[event.type]?.call(this as unknown as WebSocket, event);
   }
 
-  private clearTimer(): void {
-    if (this.authTimer !== null) clearTimeout(this.authTimer);
-    this.authTimer = null;
+  private async receive(
+    data: unknown, credential: Credential, target: FactoryRelayTarget,
+  ): Promise<void> {
+    if (this.finished) return;
+    switch (this.phase) {
+      case 'relay': {
+        if (isFactoryAuthError(data)) throw new Error('Factory relay rejected authentication');
+        const clientId = isAuthOk(data);
+        if (!clientId) throw new Error('Relay authentication response lacks a valid client ID');
+        this.phase = 'loading-crypto';
+        this.arm(SECURE_TIMEOUT_MS);
+        // Heavy libsodium bundle is loaded only for Factory relay sessions.
+        const { SecureRpcChannel } = await import('./secure-channel');
+        if (this.finished || this.phase !== 'loading-crypto') return;
+        const { channel, hello } = await SecureRpcChannel.begin(credential.identity, {
+          computerId: target.computerId, clientId,
+        });
+        if (this.finished || this.phase !== 'loading-crypto') {
+          channel.destroy();
+          return;
+        }
+        this.channel = channel;
+        this.phase = 'secure-hello';
+        this.raw.send(hello);
+        break;
+      }
+      case 'loading-crypto':
+        // The relay must not deliver application data before the hello.
+        throw new Error('Unexpected frame during cryptographic initialization');
+      case 'secure-hello': {
+        const bytes = bytesOf(data);
+        if (!bytes || !this.channel) throw new Error('Expected binary Noise server hello');
+        this.channel.finish(bytes);
+        this.phase = 'ready';
+        this.clearTimeout();
+        this.emit(new Event('open'));
+        break;
+      }
+      case 'ready': {
+        const bytes = bytesOf(data);
+        if (!bytes || bytes.length > MAX_FRAME_BYTES || !this.channel)
+          throw new Error('Peer attempted plaintext downgrade or oversized secure record');
+        const message = this.channel.open(bytes);
+        const text = new TextDecoder('utf-8', { fatal: true }).decode(message);
+        this.emit(new MessageEvent('message', { data: text }));
+        break;
+      }
+      case 'closed':
+        break;
+    }
   }
 
   private abort(): void {
     if (this.finished) return;
+    this.clearTimeout();
+    this.channel?.destroy();
+    this.channel = null;
     this.emit(new Event('error'));
-    try {
-      this.raw.close(4005, 'Relay authentication failed');
-    } catch {
-      this.raw.close();
-    }
+    try { this.raw.close(4005, 'Secure relay connection rejected'); }
+    catch { try { this.raw.close(); } catch { /* close is best-effort */ } }
   }
 
   get readyState(): number {
-    if (this.finished) return WebSocket.CLOSED;
+    if (this.finished || this.raw.readyState === WebSocket.CLOSED) return WebSocket.CLOSED;
     if (this.raw.readyState === WebSocket.CLOSING) return WebSocket.CLOSING;
-    if (this.raw.readyState === WebSocket.CLOSED) return WebSocket.CLOSED;
-    return this.authenticated ? WebSocket.OPEN : WebSocket.CONNECTING;
+    return this.phase === 'ready' ? WebSocket.OPEN : WebSocket.CONNECTING;
   }
   get bufferedAmount(): number { return this.raw.bufferedAmount; }
   get extensions(): string { return this.raw.extensions; }
   get protocol(): string { return this.raw.protocol; }
   get binaryType(): WebSocket['binaryType'] { return this.raw.binaryType; }
-  set binaryType(type: WebSocket['binaryType']) { this.raw.binaryType = type; }
+  set binaryType(value: WebSocket['binaryType']) {
+    // The real socket must always deliver binary encrypted records as bytes.
+    if (value === 'arraybuffer') this.raw.binaryType = 'arraybuffer';
+  }
 
   send(data: string | ArrayBufferLike | Blob | ArrayBufferView): void {
-    if (this.readyState !== WebSocket.OPEN) {
-      throw new DOMException('Relay authentication is not complete', 'InvalidStateError');
-    }
-    this.raw.send(data as Parameters<WebSocket['send']>[0]);
+    if (this.readyState !== WebSocket.OPEN || !this.channel)
+      throw new DOMException('Secure channel not ready', 'InvalidStateError');
+    if (typeof data !== 'string')
+      throw new Error('Binary daemon requests are not supported by secure relay adapter');
+    const plaintext = new TextEncoder().encode(withoutCompressionOffer(data));
+    this.raw.send(this.channel.seal(plaintext));
   }
 
   close(code?: number, reason?: string): void {
-    this.clearTimer();
+    this.clearTimeout();
+    this.channel?.destroy();
+    this.channel = null;
     this.raw.close(code, reason);
   }
 }
 
-/**
- * Register one in-memory credential for all sockets to this computer.
- * The SDK creates its WebSockets internally, including probe/terminal sidecars,
- * so this scoped constructor intercept is needed until it provides a transport
- * factory for connectToDaemon().
- */
-const credentials = new Map<string, Array<{ key: string }>>();
+const credentials = new Map<string, { credential: Credential; refs: number }>();
 let originalWebSocket: NativeSocket | null = null;
 
 function installFactoryRelayWebSocket(): void {
   if (originalWebSocket !== null) return;
   const Native = globalThis.WebSocket;
+  if (!Native) throw new Error('WebSocket is unavailable');
   originalWebSocket = Native;
-  const Wrapped = function (this: WebSocket, address: string | URL, protocols?: string | string[]) {
+  const Wrapped = function (
+    this: WebSocket, address: string | URL, protocols?: string | string[],
+  ) {
     const url = String(address);
-    const saved = credentials.get(url)?.at(-1);
-    if (saved) {
-      return new AuthenticatedRelaySocket(url, saved.key, Native, protocols) as unknown as WebSocket;
+    const entry = credentials.get(url);
+    if (entry) {
+      const target = factoryRelayTarget(url);
+      if (!target) throw new Error('Invalid Factory relay URL');
+      return new SecuredRelaySocket(target, entry.credential, Native, protocols) as unknown as WebSocket;
     }
     return protocols === undefined ? new Native(address) : new Native(address, protocols);
   } as unknown as NativeSocket;
   Object.assign(Wrapped, {
-    CONNECTING: Native.CONNECTING,
-    OPEN: Native.OPEN,
-    CLOSING: Native.CLOSING,
-    CLOSED: Native.CLOSED,
+    CONNECTING: Native.CONNECTING, OPEN: Native.OPEN,
+    CLOSING: Native.CLOSING, CLOSED: Native.CLOSED,
   });
   globalThis.WebSocket = Wrapped;
 }
 
-export function registerFactoryRelayCredential(url: string, apiKey: string): () => void {
-  if (!factoryRelayTarget(url)) return () => {};
-  if (!globalThis.WebSocket) throw new Error('WebSocket is unavailable');
+/**
+ * Register the trusted computer identity BEFORE the SDK constructs any sockets.
+ * No relay socket is allowed to connect without the identity returned by API.
+ */
+export function registerFactoryRelayCredential(
+  url: string, apiKey: string, identity: PinnedComputerIdentity,
+): () => void {
+  const target = factoryRelayTarget(url);
+  if (!target || target.url !== url) throw new Error('Invalid client relay URL');
+  if (!identity || identity.algorithm !== 'X25519' ||
+      typeof identity.publicKey !== 'string' || typeof identity.keyId !== 'string')
+    throw new Error('Pinned X25519 identity is mandatory for Factory relay');
+  const existing = credentials.get(url);
+  if (existing) {
+    if (existing.credential.apiKey !== apiKey ||
+        existing.credential.identity.keyId !== identity.keyId ||
+        existing.credential.identity.publicKey !== identity.publicKey)
+      throw new Error('Conflicting Factory relay credentials on the same computer');
+    existing.refs++;
+  } else {
+    credentials.set(url, {
+      credential: { apiKey, identity: { ...identity }, computerId: target.computerId },
+      refs: 1,
+    });
+  }
   installFactoryRelayWebSocket();
-  const key = { key: apiKey };
-  const list = credentials.get(url) ?? [];
-  list.push(key);
-  credentials.set(url, list);
   let released = false;
   return () => {
     if (released) return;
     released = true;
-    const list = credentials.get(url);
-    if (list) {
-      const index = list.indexOf(key);
-      if (index >= 0) list.splice(index, 1);
-      if (list.length === 0) credentials.delete(url);
-    }
+    const entry = credentials.get(url);
+    if (entry && --entry.refs <= 0) credentials.delete(url);
     if (credentials.size === 0 && originalWebSocket !== null) {
       globalThis.WebSocket = originalWebSocket;
       originalWebSocket = null;
