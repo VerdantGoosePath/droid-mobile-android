@@ -36,7 +36,7 @@ jobs:
           sdkmanager_bin="$(find "${ANDROID_HOME:-/usr/local/lib/android/sdk}/cmdline-tools" -type f -name sdkmanager | sort -V | tail -1)"
           test -n "$sdkmanager_bin"
           yes | "$sdkmanager_bin" --licenses >/dev/null || true
-          "$sdkmanager_bin" 'platforms;android-37' 'build-tools;36.0.0'
+          "$sdkmanager_bin" 'platforms;android-37.0' 'build-tools;36.0.0'
       - name: Configure release signing
         shell: bash
         env:
