@@ -14,7 +14,7 @@
  *
  * Cryptographic primitives are provided by libsodium, not implemented here.
  */
-import sodium from 'libsodium-wrappers';
+import sodium from 'libsodium-wrappers-sumo';
 
 const CHANNEL_LABEL = 'factory-secure-channel-v2';
 const NOISE_NAME = 'Noise_NK_25519_ChaChaPoly_SHA256';
