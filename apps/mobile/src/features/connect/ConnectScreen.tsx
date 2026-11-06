@@ -12,6 +12,8 @@ import { qrScanner } from '../../platform/qrScanner';
 import type { QrScanResult } from '../../platform/qrScanner';
 import { readClipboardText } from '../terminal/clipboard';
 import { normalizePairingInput, parsePairingCode } from './pairing';
+import { listFactoryComputers } from './computers';
+import type { FactoryComputer } from './computers';
 import type { PairingPayload } from './pairing';
 import { stashPendingBridge } from './pendingBridge';
 import { useHandOff } from '../pairLink/useHandOff';
@@ -49,10 +51,39 @@ export function ConnectScreen() {
   const [installProgress, setInstallProgress] = useState<number | null>(null);
   const [errorKey, setErrorKey] = useState<ConnectErrorKey | null>(null);
   const [busy, setBusy] = useState(false);
+  const [discovering, setDiscovering] = useState(false);
+  const [computerError, setComputerError] = useState(false);
+  const [computers, setComputers] = useState<FactoryComputer[]>([]);
   const inFlight = useRef(false);
 
   const canSubmit = url.trim() !== '' && hasKey && !busy;
   const showInsecureBanner = isDebugBuild() && isCleartextUrl(url);
+
+  const discover = async () => {
+    const key = keyInput.current?.value.trim() ?? '';
+    if (!isApiKeyFormat(key)) {
+      setErrorKey('connect.errorKeyFormat');
+      return;
+    }
+    setComputerError(false);
+    setComputers([]);
+    setDiscovering(true);
+    try {
+      const found = await listFactoryComputers(key);
+      setComputers(found);
+    } catch {
+      // Never render response bodies: they could contain account identifiers.
+      setComputerError(true);
+    } finally {
+      setDiscovering(false);
+    }
+  };
+
+  const chooseComputer = (computer: FactoryComputer) => {
+    setUrl(computer.relayClientUrl);
+    const key = keyInput.current?.value.trim() ?? '';
+    if (isApiKeyFormat(key)) startConnect(computer.relayClientUrl, key);
+  };
 
   const onUrlChange = (event: ChangeEvent<HTMLInputElement>) => {
     setUrl(event.target.value);
@@ -254,6 +285,36 @@ export function ConnectScreen() {
             data-1p-ignore="true"
             data-form-type="other"
           />
+        </div>
+        <div className="connect-computers">
+          <button
+            type="button"
+            className="btn btn--secondary"
+            onClick={() => void discover()}
+            disabled={busy || discovering}
+            data-testid="connect-find-computers"
+          >
+            {discovering ? t('connect.findingComputers') : t('connect.findComputers')}
+          </button>
+          {computerError ? <p className="field__error" role="alert">{t('connect.computersError')}</p> : null}
+          {!discovering && !computerError && computers.length === 0 ? null : (
+            <div role="group" aria-label={t('connect.computersList')}>
+              {computers.map((computer) => (
+                <button
+                  key={computer.id}
+                  type="button"
+                  className="btn btn--secondary"
+                  onClick={() => chooseComputer(computer)}
+                  disabled={busy || discovering}
+                >
+                  {computer.name} ({computer.status})
+                </button>
+              ))}
+            </div>
+          )}
+          {computers.some((computer) => computer.hasComputerIdentity) ? (
+            <p className="field__description" role="note">{t('connect.relaySecurityNote')}</p>
+          ) : null}
         </div>
         {errorKey ? (
           <p className="field__error" data-testid="connect-error" role="alert">
