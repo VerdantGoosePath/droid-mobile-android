@@ -74,8 +74,8 @@ async function connect(args: Record<string, any>): Promise<void> {
   const url = factoryRelayTarget(address)?.url ?? address;
   connection = createDaemonConnection({
     url, apiKey: String(args.apiKey ?? ''),
-    permissionHandler: requestPermission,
-    askUserHandler: askUser,
+    permissionHandler: (sessionId, request, generation) => requestPermission({ sessionId, request, generation }),
+    askUserHandler: (sessionId, request, generation) => askUser({ sessionId, request, generation }),
     onFacadeLost: () => {
       for (const resolve of permissionPending.values()) resolve({ behaviour: 'deny' });
       for (const resolve of askPending.values()) resolve({ cancelled: true });
@@ -83,7 +83,7 @@ async function connect(args: Record<string, any>): Promise<void> {
     }
   });
   unsubStatus = connection.onStatus(status => publish('connection.status', status));
-  unsubMission = connection.missions.subscribe(view => publish('mission.changed', view));
+  // Missions subscribe per opened session; registered on sessions.open/create.
   await connection.connect();
   publish('connection.status', connection.getStatus());
 }
@@ -100,7 +100,8 @@ async function dispatch(op: string, a: Record<string, any>): Promise<unknown> {
   if (op === 'permission.answer') {
     const resolve = permissionPending.get(String(a.id));
     if (!resolve) return false;
-    permissionPending.delete(String(a.id)); resolve(a.answer); return true;
+    permissionPending.delete(String(a.id));
+    resolve(typeof a.answer === 'object' && a.answer?.decision ? a.answer.decision : (a.answer ?? 'cancel')); return true;
   }
   if (op === 'question.answer') {
     const resolve = askPending.get(String(a.id));

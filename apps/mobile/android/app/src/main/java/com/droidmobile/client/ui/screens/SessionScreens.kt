@@ -13,6 +13,8 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
@@ -40,7 +42,7 @@ fun SessionListScreen(vm: DroidViewModel, state: DroidState, open: (String) -> U
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             Row {
-                IconButton(onClick = vm::refreshSessions) {
+                IconButton(onClick = { vm.refreshSessions() }) {
                     Icon(Icons.Filled.Refresh, "Refresh sessions")
                 }
                 FilledIconButton(onClick = { showNew = true }) {

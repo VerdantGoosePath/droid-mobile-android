@@ -3,7 +3,7 @@ package com.droidmobile.client.ui
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.List
+import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Extension
@@ -63,7 +63,7 @@ fun DroidApp(vm: DroidViewModel) {
                     },
                     icon = {
                         when (index) {
-                            0 -> Icon(Icons.AutoMirrored.Filled.List, contentDescription = null)
+                            0 -> Icon(Icons.Filled.List, contentDescription = null)
                             1 -> Icon(Icons.Filled.Folder, contentDescription = null)
                             2 -> Icon(Icons.Filled.Extension, contentDescription = null)
                             else -> Icon(Icons.Filled.Settings, contentDescription = null)
