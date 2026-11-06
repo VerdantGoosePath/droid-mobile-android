@@ -35,6 +35,7 @@ import { AuthError, ConnectionError } from './errors';
 import type { DaemonClientError, VersionMismatchWarning } from './errors';
 import { toPage } from './paging';
 import { loadSdk } from './sdk';
+import { factoryRelayTarget, registerFactoryRelayCredential } from './relay';
 import type { SessionMessagesPage } from './paging';
 import { toModelSummary } from './settings';
 import type { CreateSessionRequest, DefaultsPatch, ModelSummary } from './settings';
@@ -254,8 +255,14 @@ const TRUST_VISIBLE_POLL_MS = 150;
 const TRUST_VISIBLE_CAP_MS = 3_000;
 
 export function createDaemonConnection(options: DaemonConnectionOptions): DaemonConnection {
-  const url = options.url;
+  // --remote-control prints /agent; the mobile client must attach to /client.
+  const url = factoryRelayTarget(options.url)?.url ?? options.url;
   const apiKey = options.apiKey;
+  let releaseRelayCredential: (() => void) | null = null;
+  function clearRelayCredential(): void {
+    releaseRelayCredential?.();
+    releaseRelayCredential = null;
+  }
   const backoff: BackoffOptions = {
     initialMs: options.backoff?.initialMs ?? 500,
     maxMs: options.backoff?.maxMs ?? 15000,
@@ -364,6 +371,10 @@ export function createDaemonConnection(options: DaemonConnectionOptions): Daemon
     emitStatus({ type: 'auth-start' });
     lastFailure = null;
     try {
+      // Register before importing the SDK: it may capture WebSocket during import.
+      if (factoryRelayTarget(url) && !releaseRelayCredential) {
+        releaseRelayCredential = registerFactoryRelayCredential(url, apiKey);
+      }
       const { connectToDaemon } = await loadSdk();
       const droid = await connectToDaemon({
         url,
@@ -401,6 +412,7 @@ export function createDaemonConnection(options: DaemonConnectionOptions): Daemon
       emitStatus({ type: 'ready' });
       startKeepAlive();
     } catch (err) {
+      clearRelayCredential();
       const classified = classifyConnectFailure(err);
       lastFailure = classified;
       if (!disposed) {
@@ -589,6 +601,7 @@ export function createDaemonConnection(options: DaemonConnectionOptions): Daemon
     reconnectGeneration += 1;
     wakeReconnectSleep();
     teardownDroid();
+    clearRelayCredential();
     emitStatus({ type: 'disconnected' });
   }
 
