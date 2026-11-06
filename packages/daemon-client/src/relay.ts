@@ -216,7 +216,7 @@ class SecuredRelaySocket extends EventTarget {
         }
         this.channel = channel;
         this.phase = 'secure-hello';
-        this.raw.send(hello);
+        this.raw.send(new Uint8Array(hello));
         break;
       }
       case 'loading-crypto':
@@ -275,7 +275,7 @@ class SecuredRelaySocket extends EventTarget {
     if (typeof data !== 'string')
       throw new Error('Binary daemon requests are not supported by secure relay adapter');
     const plaintext = new TextEncoder().encode(withoutCompressionOffer(data));
-    this.raw.send(this.channel.seal(plaintext));
+    this.raw.send(new Uint8Array(this.channel.seal(plaintext)));
   }
 
   close(code?: number, reason?: string): void {
