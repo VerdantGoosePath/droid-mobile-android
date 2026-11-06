@@ -81,7 +81,11 @@ function isFactoryAuthError(data: unknown): boolean {
 }
 
 function bytesOf(data: unknown): Uint8Array | null {
-  if (data instanceof ArrayBuffer) return new Uint8Array(data);
+  // WebView bridges and test environments can expose ArrayBuffers from
+  // another JS realm, where `instanceof ArrayBuffer` is false.
+  if (data instanceof ArrayBuffer ||
+      Object.prototype.toString.call(data) === '[object ArrayBuffer]')
+    return new Uint8Array(data as ArrayBuffer);
   if (ArrayBuffer.isView(data))
     return new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
   return null;
