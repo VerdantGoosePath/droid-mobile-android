@@ -58,7 +58,7 @@
     "findingComputers": "Finding computers…",
     "computersError": "Could not retrieve your registered Factory computers. Check your API key and connection.",
     "computersList": "Registered Factory computers",
-    "relaySecurityNote": "Factory advertises a secure computer identity. This experimental relay client uses TLS but does not yet implement the official end-to-end secure-channel handshake."
+    "relaySecurityNote": "Factory Remote Control uses an end-to-end encrypted secure channel with the computer's verified X25519 identity. This integration remains experimental until a live-device interoperability test."
   },
   "pairLink": {
     "title": "Pair with this daemon?",
