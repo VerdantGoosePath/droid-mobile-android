@@ -343,11 +343,12 @@ export class SecureRpcChannel {
           typeof record.header !== 'undefined' && typeof record.header !== 'string')
         throw new Error('Invalid encrypted record fields');
       if (!this.rxState) {
-        if (typeof record.header !== 'string' || !/^[A-Za-z0-9+/]{32}$/.test(record.header))
+        if (typeof record.header !== 'string' || record.header.length !== 32)
           throw new Error('First encrypted record needs a stream header');
         const header = sodium.from_base64(record.header, sodium.base64_variants.ORIGINAL);
-        if (header.length !== sodium.crypto_secretstream_xchacha20poly1305_HEADERBYTES)
-          throw new Error('Invalid encrypted stream header');
+        if (header.length !== sodium.crypto_secretstream_xchacha20poly1305_HEADERBYTES ||
+            sodium.to_base64(header, sodium.base64_variants.ORIGINAL) !== record.header)
+          throw new Error('Invalid or non-canonical encrypted stream header');
         this.rxState = sodium.crypto_secretstream_xchacha20poly1305_init_pull(header, this.rxKey);
         sodium.memzero(this.rxKey);
       } else if (record.header !== undefined) {
