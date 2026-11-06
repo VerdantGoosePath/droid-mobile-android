@@ -31,6 +31,8 @@ data class DroidState(
     val sections: Map<String, Any?> = emptyMap(),
     val streaming: Boolean = false,
     val streamText: String = "",
+    val terminalOutput: Map<String, String> = emptyMap(),
+    val terminalStatus: String = "idle",
     val error: String? = null,
     val permissionRequest: JSONObject? = null,
     val questionRequest: JSONObject? = null
@@ -80,6 +82,26 @@ class DroidRepository(
                 "session.failed" -> mutable.value = mutable.value.copy(
                     streaming = false, error = (data as? JSONObject)?.optString("message", "Turn failed")
                 )
+                "terminal.status" -> mutable.value = mutable.value.copy(terminalStatus = data.toString())
+                "terminal.event" -> {
+                    val eventData = data as? JSONObject
+                    val id = eventData?.optString("terminalId").orEmpty()
+                    if (id.isNotBlank()) {
+                        val text = when (eventData?.optString("type")) {
+                            "data" -> eventData.optString("data")
+                            "exit" -> "\n[Shell exited: ${eventData.optString("exitCode")}]\n"
+                            else -> ""
+                        }
+                        if (text.isNotBlank()) {
+                            // Present readable terminal output without raw protocol JSON.
+                            // An ANSI/xterm renderer is still required for full TTY parity.
+                            val plain = text.replace(Regex("\\u001B\\[[0-9;?]*[ -/]*[@-~]"), "")
+                            val outputs = mutable.value.terminalOutput.toMutableMap()
+                            outputs[id] = ((outputs[id] ?: "") + plain).takeLast(120_000)
+                            mutable.value = mutable.value.copy(terminalOutput = outputs)
+                        }
+                    }
+                }
                 "permission.request" -> mutable.value = mutable.value.copy(permissionRequest = data as? JSONObject)
                 "question.request" -> mutable.value = mutable.value.copy(questionRequest = data as? JSONObject)
                 else -> if (event.isNotBlank()) {

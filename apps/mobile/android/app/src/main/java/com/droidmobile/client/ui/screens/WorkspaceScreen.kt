@@ -14,6 +14,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
+import com.droidmobile.client.ui.components.*
+import kotlinx.coroutines.launch
 import com.droidmobile.client.backend.DroidState
 import com.droidmobile.client.backend.DroidViewModel
 import org.json.JSONArray
@@ -23,7 +25,11 @@ import org.json.JSONObject
 @Composable
 fun WorkspaceScreen(vm: DroidViewModel, state: DroidState) {
     var tab by remember { mutableStateOf("Files") }
-    var chosen by remember { mutableStateOf(state.activeSession ?: "") }
+    var chosen by remember { mutableStateOf(state.activeSession ?: state.sessions.firstOrNull()?.optString("id").orEmpty()) }
+    val scope = rememberCoroutineScope()
+    LaunchedEffect(state.sessions.size) {
+        if (chosen.isBlank() && state.sessions.isNotEmpty()) chosen = state.sessions.first().optString("id")
+    }
     var showHidden by remember { mutableStateOf(false) }
     var search by remember { mutableStateOf("") }
     var file by remember { mutableStateOf("") }
@@ -44,10 +50,9 @@ fun WorkspaceScreen(vm: DroidViewModel, state: DroidState) {
         }
     }
     Column(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
-        Text("Workspace", style = MaterialTheme.typography.headlineLarge,
-            modifier = Modifier.padding(vertical = 16.dp))
         if (state.sessions.isEmpty()) {
-            Text("Create or open a Droid session to browse its workspace.")
+            DroidEmptyState("Choose a workspace",
+                "Start a Droid session to explore its files, changes and terminal.")
             return@Column
         }
         var menu by remember { mutableStateOf(false) }
@@ -64,9 +69,13 @@ fun WorkspaceScreen(vm: DroidViewModel, state: DroidState) {
                 }
             }
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf("Files", "Changes", "Terminal").forEach {
-                FilterChip(selected = tab == it, onClick = { tab = it }, label = { Text(it) })
+        PrimaryTabRow(selectedTabIndex = listOf("Files", "Changes", "Terminal").indexOf(tab)) {
+            listOf("Files", "Changes", "Terminal").forEach { choice ->
+                Tab(
+                    selected = tab == choice,
+                    onClick = { tab = choice },
+                    text = { Text(choice) }
+                )
             }
         }
         when (tab) {
@@ -88,16 +97,30 @@ fun WorkspaceScreen(vm: DroidViewModel, state: DroidState) {
                     Box(Modifier.weight(1f)) { StructuredDataPanel(state.sections["workspace.content"]) }
                 } else {
                     val paths = files ?: (state.sections["workspace.search"] as? JSONArray) ?: JSONArray()
-                    LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        items((0 until paths.length()).map { paths.optString(it) }
-                            .filter { search.isBlank() || it.contains(search, true) }) { path ->
-                            ElevatedCard(onClick = {
-                                file = path
-                                vm.fetch("workspace.content", "workspace.content", JSONObject()
-                                    .put("id", chosen).put("path", path))
-                            }) {
-                                Text(path, modifier = Modifier.padding(16.dp),
-                                    style = MaterialTheme.typography.bodyMedium)
+                    val matching = (0 until paths.length())
+                        .map { paths.optString(it) }
+                        .filter { search.isBlank() || it.contains(search, true) }
+                    LazyColumn(
+                        modifier = Modifier.weight(1f),
+                        contentPadding = PaddingValues(vertical = 14.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        if (matching.isEmpty()) item {
+                            DroidEmptyState("No matching files",
+                                "Try another filename or refresh the workspace.",
+                                modifier = Modifier.height(250.dp))
+                        }
+                        items(matching) { path ->
+                            GroupedItems {
+                                GroupedActionRow(
+                                    title = path.substringAfterLast('/').substringAfterLast('\\'),
+                                    supportingText = path,
+                                    onClick = {
+                                        file = path
+                                        vm.fetch("workspace.content", "workspace.content", JSONObject()
+                                            .put("id", chosen).put("path", path))
+                                    }
+                                )
                             }
                         }
                     }
@@ -116,45 +139,117 @@ fun WorkspaceScreen(vm: DroidViewModel, state: DroidState) {
                         .put("id", chosen).put("baseBranch", diffBase)) }) { Text("Diff") }
                 }
                 Box(Modifier.weight(1f)) { StructuredDataPanel(state.sections["workspace.diff"]) }
+                val gitAvailable = (state.sections["workspace.diff"] as? JSONObject)
+                    ?.optBoolean("success", true) != false
                 OutlinedTextField(value = commitMessage, onValueChange = { commitMessage = it },
                     label = { Text("Commit message") }, modifier = Modifier.fillMaxWidth())
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(enabled = commitMessage.isNotBlank(), onClick = {
+                    Button(enabled = gitAvailable && commitMessage.isNotBlank(), onClick = {
                         vm.action("git.commit", JSONObject().put("id", chosen).put("message", commitMessage))
                     }) { Text("Commit") }
-                    FilledTonalButton(onClick = {
+                    FilledTonalButton(enabled = gitAvailable, onClick = {
                         vm.action("git.push", JSONObject().put("id", chosen))
                     }) { Text("Push") }
-                    TextButton(onClick = {
+                    TextButton(enabled = gitAvailable, onClick = {
                         vm.action("git.pr", JSONObject().put("params", JSONObject().put("sessionId", chosen)))
                     }) { Text("Create PR") }
                 }
             }
             else -> {
-                LaunchedEffect(chosen) { vm.fetch("terminal.list", "terminal.list", JSONObject().put("id", chosen)) }
-                Text("Terminal", style = MaterialTheme.typography.titleLarge)
-                Button(onClick = {
-                    vm.action("terminal.create", JSONObject().put("id", chosen).put("params",
-                        JSONObject().put("cols", 80).put("rows", 24)))
-                }) { Text("New shell") }
-                OutlinedTextField(value = terminalId, onValueChange = { terminalId = it },
-                    label = { Text("Terminal ID") }, modifier = Modifier.fillMaxWidth())
-                Box(Modifier.weight(1f)) {
+                LaunchedEffect(chosen) {
+                    try {
+                        vm.repository.request("terminal.connect")
+                        vm.fetch("terminal.list", "terminal.list", JSONObject().put("id", chosen))
+                    } catch (e: Exception) { vm.repository.updateError(e.message) }
+                }
+                val terminals = state.sections["terminal.list"] as? JSONArray ?: JSONArray()
+                var terminalMenu by remember { mutableStateOf(false) }
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(top = 12.dp, bottom = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Box(Modifier.weight(1f)) {
+                        FilledTonalButton(onClick = { terminalMenu = true },
+                            modifier = Modifier.fillMaxWidth()) {
+                            Text(
+                                if (terminalId.isBlank()) "Choose shell"
+                                else "Shell ${terminalId.take(8)}"
+                            )
+                        }
+                        DropdownMenu(expanded = terminalMenu, onDismissRequest = { terminalMenu = false }) {
+                            (0 until terminals.length()).mapNotNull { terminals.optJSONObject(it) }
+                                .forEach { item ->
+                                    DropdownMenuItem(
+                                        text = { Text("Shell ${item.optString("id").take(8)}") },
+                                        onClick = {
+                                            terminalId = item.optString("id")
+                                            terminalMenu = false
+                                        }
+                                    )
+                                }
+                        }
+                    }
+                    Button(onClick = {
+                        val id = java.util.UUID.randomUUID().toString()
+                        scope.launch {
+                            try {
+                                vm.repository.request("terminal.create", JSONObject()
+                                    .put("id", chosen).put("params", JSONObject()
+                                        .put("terminalId", id).put("cols", 80).put("rows", 24)))
+                                terminalId = id
+                                vm.fetch("terminal.list", "terminal.list", JSONObject().put("id", chosen))
+                            } catch (e: Exception) { vm.repository.updateError(e.message) }
+                        }
+                    }) { Text("New shell") }
+                }
+                Text("Connection: ${state.terminalStatus}",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Surface(
+                    modifier = Modifier.fillMaxWidth().weight(1f),
+                    color = MaterialTheme.colorScheme.surfaceContainerLow,
+                    shape = MaterialTheme.shapes.large
+                ) {
                     SelectionContainer {
-                        Text(terminalLines?.toString() ?: "Shell output will appear here.",
-                            fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodyMedium,
-                            modifier = Modifier.verticalScroll(rememberScrollState()))
+                        Text(
+                            state.terminalOutput[terminalId]
+                                ?: (0 until terminals.length())
+                                    .mapNotNull { terminals.optJSONObject(it) }
+                                    .find { it.optString("id") == terminalId }
+                                    ?.optJSONObject("state")?.optString("plainText")
+                                ?: "Select or create a shell to see its output.",
+                            fontFamily = FontFamily.Monospace,
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.padding(16.dp)
+                                .verticalScroll(rememberScrollState())
+                        )
                     }
                 }
-                Row {
-                    OutlinedTextField(value = terminalInput, onValueChange = { terminalInput = it },
-                        label = { Text("Input") }, modifier = Modifier.weight(1f))
-                    Button(onClick = {
-                        vm.action("terminal.write", JSONObject().put("id", chosen)
-                            .put("terminalId", terminalId).put("data", terminalInput + "\n"))
-                        terminalInput = ""
-                    }) { Text("Send") }
+                Row(
+                    Modifier.fillMaxWidth().imePadding().padding(vertical = 8.dp),
+                    verticalAlignment = Alignment.Bottom,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OutlinedTextField(
+                        value = terminalInput,
+                        onValueChange = { terminalInput = it },
+                        label = { Text("Send to shell") },
+                        modifier = Modifier.weight(1f),
+                        maxLines = 4
+                    )
+                    Button(
+                        enabled = terminalId.isNotBlank() && terminalInput.isNotBlank(),
+                        onClick = {
+                            vm.action("terminal.write", JSONObject()
+                                .put("id", chosen)
+                                .put("terminalId", terminalId)
+                                .put("data", terminalInput + "\n"))
+                            terminalInput = ""
+                        }
+                    ) { Text("Send") }
                 }
+
             }
         }
     }
