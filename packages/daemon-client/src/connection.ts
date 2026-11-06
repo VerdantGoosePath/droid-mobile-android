@@ -361,6 +361,10 @@ export function createDaemonConnection(options: DaemonConnectionOptions): Daemon
       droid.disconnect();
     } catch {
       // disconnecting a broken droid must never throw
+    } finally {
+      // Do not leave a relay API key registered in the WebSocket constructor
+      // while the facade is gone or awaiting a reconnect.
+      clearRelayCredential();
     }
   }
 
