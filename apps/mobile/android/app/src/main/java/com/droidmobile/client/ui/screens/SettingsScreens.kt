@@ -92,6 +92,7 @@ fun SettingsDetailScreen(vm: DroidViewModel, state: DroidState, name: String, on
     var language by remember(name) { mutableStateOf(prefs.getString("language", "system") ?: "system") }
     var url by remember { mutableStateOf(state.connectedUrl) }
     var key by remember { mutableStateOf(vm.repository.secrets.read().orEmpty()) }
+    var confirmForget by remember { mutableStateOf(false) }
     var model by remember { mutableStateOf("") }
     var autonomy by remember { mutableStateOf("") }
     var effort by remember { mutableStateOf("") }
@@ -104,7 +105,9 @@ fun SettingsDetailScreen(vm: DroidViewModel, state: DroidState, name: String, on
             verticalArrangement = Arrangement.spacedBy(16.dp)) {
             when (name) {
                 "connection" -> {
-                    Text("Current connection: ${state.status}")
+                    SectionHeading("Connected computer",
+                        "Manage the Factory relay session for this device.")
+                    StatusPill(state.status)
                     OutlinedTextField(value = url, onValueChange = { url = it },
                         label = { Text("Relay endpoint") }, modifier = Modifier.fillMaxWidth())
                     OutlinedTextField(value = key, onValueChange = { key = it },
@@ -114,14 +117,29 @@ fun SettingsDetailScreen(vm: DroidViewModel, state: DroidState, name: String, on
                     OutlinedButton(onClick = vm::disconnect) { Text("Disconnect") }
                 }
                 "security" -> {
-                    Text("Your Factory key is encrypted with Android Keystore (AES-GCM) and is never included in a URL or log.")
-                    Button(onClick = {
-                        vm.repository.secrets.clear()
-                        key = ""
-                        vm.disconnect()
-                    }) { Text("Forget credentials") }
-                    Text("Biometric app lock requires a separate native authentication implementation.",
-                        style = MaterialTheme.typography.bodySmall)
+                    SectionHeading("Device protection",
+                        "Your Factory credential is encrypted with an Android Keystore key.")
+                    GroupedItems {
+                        ListItem(
+                            colors = ListItemDefaults.colors(
+                                containerColor = MaterialTheme.colorScheme.surfaceContainerLow
+                            ),
+                            leadingContent = { Icon(Icons.Filled.VerifiedUser, null) },
+                            headlineContent = { Text("Encrypted credential storage") },
+                            supportingContent = {
+                                Text("AES-GCM encrypted and unavailable to other apps.")
+                            },
+                            trailingContent = { StatusPill("active") }
+                        )
+                    }
+                    SectionHeading("Remove credentials",
+                        "Disconnect this device and remove the stored Factory API key.")
+                    OutlinedButton(onClick = { confirmForget = true }) {
+                        Text("Forget credentials…")
+                    }
+                    Text("Biometric locking of the whole app is not yet available in the native migration.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 "appearance" -> {
                     Text("Colour", style = MaterialTheme.typography.titleMedium)
@@ -182,7 +200,29 @@ fun SettingsDetailScreen(vm: DroidViewModel, state: DroidState, name: String, on
                 }
                 "defaults" -> {
                     Text("Daemon defaults", style = MaterialTheme.typography.titleMedium)
-                    StructuredDataPanel(state.sections["settings.defaults"])
+                    val defaults = state.sections["settings.defaults"] as? JSONObject
+                    if (defaults == null) {
+                        Text("Loading default settings…",
+                            style = MaterialTheme.typography.bodyMedium)
+                    } else {
+                        GroupedItems {
+                            listOf("modelId" to "Model",
+                                "autonomyLevel" to "Autonomy",
+                                "reasoningEffort" to "Reasoning").forEachIndexed { index, pair ->
+                                ListItem(
+                                    colors = ListItemDefaults.colors(
+                                        containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+                                    headlineContent = { Text(pair.second) },
+                                    supportingContent = {
+                                        Text(defaults.optString(pair.first, "Not set"))
+                                    }
+                                )
+                                if (index != 2) HorizontalDivider(
+                                    Modifier.padding(horizontal = 16.dp),
+                                    color = MaterialTheme.colorScheme.outlineVariant)
+                            }
+                        }
+                    }
                     OutlinedTextField(value = model, onValueChange = { model = it },
                         label = { Text("Default model ID") }, modifier = Modifier.fillMaxWidth())
                     OutlinedTextField(value = effort, onValueChange = { effort = it },
@@ -212,7 +252,15 @@ fun SettingsDetailScreen(vm: DroidViewModel, state: DroidState, name: String, on
                         style = MaterialTheme.typography.bodySmall)
                 }
                 "battery" -> {
-                    Text("Android may stop background connections under battery restrictions.")
+                    SectionHeading("Battery optimisation",
+                        "Android may limit network sessions while the app is in the background.")
+                    val power = context.getSystemService(android.content.Context.POWER_SERVICE)
+                        as android.os.PowerManager
+                    val unrestricted = power.isIgnoringBatteryOptimizations(context.packageName)
+                    StatusPill(if (unrestricted) "Unrestricted" else "Optimized")
+                    Text(if (unrestricted)
+                        "This app is excluded from Android battery optimisations."
+                    else "Battery optimisation may interrupt a connected session.")
                     Button(onClick = {
                         val intent = android.content.Intent(android.provider.Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
                         context.startActivity(intent)
@@ -228,5 +276,25 @@ fun SettingsDetailScreen(vm: DroidViewModel, state: DroidState, name: String, on
                 else -> Text("Unknown settings page")
             }
         }
+    }
+    if (confirmForget) {
+        AlertDialog(
+            onDismissRequest = { confirmForget = false },
+            title = { Text("Forget Factory credentials?") },
+            text = {
+                Text("This will disconnect the app and permanently erase the Factory API key from this device.")
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    vm.repository.secrets.clear()
+                    key = ""
+                    confirmForget = false
+                    vm.disconnect()
+                }) { Text("Forget key") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmForget = false }) { Text("Cancel") }
+            }
+        )
     }
 }
