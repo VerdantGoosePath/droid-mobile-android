@@ -36,6 +36,7 @@ import type { DaemonClientError, VersionMismatchWarning } from './errors';
 import { toPage } from './paging';
 import { loadSdk } from './sdk';
 import { factoryRelayTarget, registerFactoryRelayCredential } from './relay';
+import type { PinnedComputerIdentity } from './secure-channel';
 import type { SessionMessagesPage } from './paging';
 import { toModelSummary } from './settings';
 import type { CreateSessionRequest, DefaultsPatch, ModelSummary } from './settings';
@@ -98,6 +99,8 @@ export type DefaultSettings = Awaited<ReturnType<ConnectedDroid['settings']['get
 export interface DaemonConnectionOptions {
   url: string;
   apiKey: string;
+  /** Required for relay: fetch the pinned computer identity from authenticated Factory API. */
+  resolveRelayIdentity?: (url: string, apiKey: string) => Promise<PinnedComputerIdentity>;
   /** Overrides for the reconnect backoff (jittered exponential). */
   backoff?: Partial<BackoffOptions>;
   /** Interval of the liveness probe while ready; 0 disables it. */
@@ -353,7 +356,7 @@ export function createDaemonConnection(options: DaemonConnectionOptions): Daemon
     options.onFacadeLost?.(abandoned);
     const droid = currentDroid;
     currentDroid = null;
-    if (!droid) return;
+    if (!droid) { clearRelayCredential(); return; }
     try {
       droid.disconnect();
     } catch {
@@ -371,9 +374,18 @@ export function createDaemonConnection(options: DaemonConnectionOptions): Daemon
     emitStatus({ type: 'auth-start' });
     lastFailure = null;
     try {
-      // Register before importing the SDK: it may capture WebSocket during import.
-      if (factoryRelayTarget(url) && !releaseRelayCredential) {
-        releaseRelayCredential = registerFactoryRelayCredential(url, apiKey);
+      // A relay address alone does not authenticate the computer. Obtain a
+      // trusted X25519 identity from Factory's HTTPS Computers API first.
+      if (factoryRelayTarget(url)) {
+        if (!options.resolveRelayIdentity) {
+          throw new ConnectionError('Secure Factory relay requires computer identity verification.');
+        }
+        const identity = await options.resolveRelayIdentity(url, apiKey);
+        if (disposed || droidToken !== token) {
+          throw new ConnectionError('Connection attempt was superseded.');
+        }
+        clearRelayCredential();
+        releaseRelayCredential = registerFactoryRelayCredential(url, apiKey, identity);
       }
       const { connectToDaemon } = await loadSdk();
       const droid = await connectToDaemon({
