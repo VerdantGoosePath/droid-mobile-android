@@ -37,7 +37,7 @@ class MockSocket extends EventTarget {
   bufferedAmount = 0;
   extensions = '';
   protocol = '';
-  binaryType: BinaryType = 'blob';
+  binaryType: WebSocket['binaryType'] = 'blob';
   sent: unknown[] = [];
 
   constructor(url: string | URL) {
