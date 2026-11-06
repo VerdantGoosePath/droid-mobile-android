@@ -48,7 +48,7 @@ function encryptServerRecord(plaintext: Uint8Array) {
   const key = sodium.from_hex(CLIENT_RX_KEY);
   const { state, header } = sodium.crypto_secretstream_xchacha20poly1305_init_push(key);
   const ciphertext = sodium.crypto_secretstream_xchacha20poly1305_push(
-    state, plaintext, encoder.encode('factory-secure-channel-v2'),
+    state, decoder.decode(plaintext), 'factory-secure-channel-v2',
     sodium.crypto_secretstream_xchacha20poly1305_TAG_MESSAGE,
   );
   return { header: sodium.to_base64(header), ciphertext: sodium.to_base64(ciphertext) };
@@ -87,7 +87,7 @@ describe('Factory secure-channel v2 independent vectors', () => {
       sodium.from_hex(CLIENT_TX_KEY),
     );
     const opened = sodium.crypto_secretstream_xchacha20poly1305_pull(
-      stream, sodium.from_base64(sealed.ciphertext), encoder.encode('factory-secure-channel-v2'),
+      stream, sodium.from_base64(sealed.ciphertext), 'factory-secure-channel-v2',
     );
     expect(opened && decoder.decode(opened.message)).toBe('sensitive daemon request');
     channel.destroy();
@@ -136,7 +136,7 @@ describe('Factory secure-channel v2 independent vectors', () => {
     const key = sodium.from_hex(CLIENT_RX_KEY);
     const { state, header } = sodium.crypto_secretstream_xchacha20poly1305_init_push(key);
     const ciphertext = sodium.crypto_secretstream_xchacha20poly1305_push(
-      state, encoder.encode('close'), encoder.encode('factory-secure-channel-v2'),
+      state, 'close', 'factory-secure-channel-v2',
       sodium.crypto_secretstream_xchacha20poly1305_TAG_FINAL,
     );
     expect(() => channel.open(asFrame({
