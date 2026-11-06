@@ -343,18 +343,18 @@ export class SecureRpcChannel {
           typeof record.header !== 'undefined' && typeof record.header !== 'string')
         throw new Error('Invalid encrypted record fields');
       if (!this.rxState) {
-        if (typeof record.header !== 'string' || record.header.length !== 32)
+        if (typeof record.header !== 'string' || !/^[A-Za-z0-9_-]{32}$/.test(record.header))
           throw new Error('First encrypted record needs a stream header');
-        const header = sodium.from_base64(record.header, sodium.base64_variants.ORIGINAL);
+        const header = sodium.from_base64(record.header, sodium.base64_variants.URLSAFE_NO_PADDING);
         if (header.length !== sodium.crypto_secretstream_xchacha20poly1305_HEADERBYTES ||
-            sodium.to_base64(header, sodium.base64_variants.ORIGINAL) !== record.header)
+            sodium.to_base64(header, sodium.base64_variants.URLSAFE_NO_PADDING) !== record.header)
           throw new Error('Invalid or non-canonical encrypted stream header');
         this.rxState = sodium.crypto_secretstream_xchacha20poly1305_init_pull(header, this.rxKey);
         sodium.memzero(this.rxKey);
       } else if (record.header !== undefined) {
         throw new Error('Duplicate encrypted stream header');
       }
-      const ciphertext = sodium.from_base64(record.ciphertext, sodium.base64_variants.ORIGINAL);
+      const ciphertext = sodium.from_base64(record.ciphertext, sodium.base64_variants.URLSAFE_NO_PADDING);
       if (ciphertext.length < sodium.crypto_secretstream_xchacha20poly1305_ABYTES)
         throw new Error('Encrypted record too small');
       const plaintext = sodium.crypto_secretstream_xchacha20poly1305_pull(this.rxState, ciphertext, CHANNEL_LABEL);
