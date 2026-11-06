@@ -14,6 +14,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.droidmobile.client.ui.components.*
+import androidx.compose.material.icons.filled.*
 import com.droidmobile.client.backend.DroidState
 import com.droidmobile.client.backend.DroidViewModel
 import org.json.JSONArray
@@ -32,22 +34,33 @@ private val sections = listOf(
 
 @Composable
 fun ExtensionsIndexScreen(open: (String) -> Unit) {
-    LazyColumn(contentPadding = PaddingValues(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(20.dp),
+        verticalArrangement = Arrangement.spacedBy(18.dp)
+    ) {
         item {
-            Text("Extensions", style = MaterialTheme.typography.headlineLarge)
-            Spacer(Modifier.height(8.dp))
-            Text("Manage skills, tools, models and scheduled work.",
-                color = MaterialTheme.colorScheme.onSurfaceVariant)
+            SectionHeading("Manage your tools",
+                "Connect services and extend what Droid can do.")
         }
-        items(sections) { section ->
-            ElevatedCard(onClick = { open(section.id) }) {
-                Row(Modifier.fillMaxWidth().padding(18.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text(section.label, style = MaterialTheme.typography.titleMedium)
-                        Text(section.summary, style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+        item {
+            GroupedItems {
+                sections.forEachIndexed { index, section ->
+                    val icon = when (section.id) {
+                        "mcp" -> Icons.Filled.Hub
+                        "skills" -> Icons.Filled.AutoAwesome
+                        "commands" -> Icons.Filled.Terminal
+                        "plugins" -> Icons.Filled.Extension
+                        "marketplaces" -> Icons.Filled.Storefront
+                        "custom-models" -> Icons.Filled.Tune
+                        else -> Icons.Filled.Schedule
                     }
-                    Icon(Icons.Filled.ArrowForward, null)
+                    GroupedActionRow(section.label, section.summary,
+                        onClick = { open(section.id) }, leadingIcon = icon)
+                    if (index != sections.lastIndex) HorizontalDivider(
+                        modifier = Modifier.padding(start = 64.dp, end = 16.dp),
+                        color = MaterialTheme.colorScheme.outlineVariant
+                    )
                 }
             }
         }
@@ -73,10 +86,14 @@ fun ExtensionsDetailScreen(vm: DroidViewModel, state: DroidState, name: String, 
     }
     LaunchedEffect(name) { vm.fetch(name, section.read) }
     Column(Modifier.fillMaxSize()) {
-        Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
-            Text(section.label, style = MaterialTheme.typography.headlineSmall,
-                modifier = Modifier.weight(1f))
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text(section.summary, modifier = Modifier.weight(1f),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
             IconButton(onClick = { vm.fetch(name, section.read) }) {
                 Icon(Icons.Filled.Refresh, "Refresh")
             }
@@ -89,6 +106,17 @@ fun ExtensionsDetailScreen(vm: DroidViewModel, state: DroidState, name: String, 
         LazyColumn(Modifier.weight(1f),
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            if (items.isEmpty()) item {
+                DroidEmptyState(
+                    title = if (value == null) "Loading ${section.label.lowercase()}…" else "Nothing here yet",
+                    supportingText = if (value == null)
+                        "Contacting the Droid daemon for this feature."
+                    else "No ${section.label.lowercase()} are configured. Add one below or refresh.",
+                    modifier = Modifier.height(280.dp),
+                    actionLabel = "Refresh",
+                    onAction = { vm.fetch(name, section.read) }
+                )
+            }
             items(items.filter { it.toString().contains(query, ignoreCase = true) }) { item ->
                 ElevatedCard(onClick = { selected = item }) {
                     Column(Modifier.fillMaxWidth().padding(16.dp)) {

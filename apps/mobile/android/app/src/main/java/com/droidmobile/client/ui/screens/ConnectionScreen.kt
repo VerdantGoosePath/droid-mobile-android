@@ -18,6 +18,7 @@ import androidx.compose.ui.unit.dp
 import com.droidmobile.client.backend.DroidState
 import com.droidmobile.client.backend.DroidViewModel
 import com.droidmobile.client.ui.theme.DroidTokens
+import com.droidmobile.client.ui.components.*
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 
@@ -36,16 +37,19 @@ fun ConnectionScreen(vm: DroidViewModel, state: DroidState) {
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         item {
-            Spacer(Modifier.height(20.dp))
-            Text("Droid Mobile", style = MaterialTheme.typography.displaySmall)
-            Text("Remote Control", style = MaterialTheme.typography.headlineMedium,
-                color = MaterialTheme.colorScheme.primary)
-            Spacer(Modifier.height(8.dp))
-            Text("Connect through Factory's relay. No Tailscale, proxy, or inbound firewall rule.",
-                style = MaterialTheme.typography.bodyLarge)
+            Spacer(Modifier.height(4.dp))
+            Text("Remote Control", style = MaterialTheme.typography.headlineLarge,
+                color = MaterialTheme.colorScheme.onSurface)
+            Text("Your computer, wherever you are.",
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("Factory handles the connection. No VPN, reverse proxy or open ports.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         item {
-            ElevatedCard(shape = MaterialTheme.shapes.extraLarge) {
+            Card(shape = MaterialTheme.shapes.extraLarge,
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)) {
                 Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                     Text("Your Factory connection", style = MaterialTheme.typography.titleLarge)
                     OutlinedTextField(
@@ -55,12 +59,16 @@ fun ConnectionScreen(vm: DroidViewModel, state: DroidState) {
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                         modifier = Modifier.fillMaxWidth()
                     )
-                    Row(verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        FilterChip(selected = region == "global", onClick = { region = "global" },
-                            label = { Text("Global") })
-                        FilterChip(selected = region == "eu", onClick = { region = "eu" },
-                            label = { Text("EU") })
+                    Text("Account region", style = MaterialTheme.typography.labelLarge)
+                    SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                        listOf("global", "eu").forEachIndexed { index, choice ->
+                            SegmentedButton(
+                                selected = region == choice,
+                                onClick = { region = choice },
+                                shape = SegmentedButtonDefaults.itemShape(index, 2),
+                                label = { Text(if (choice == "global") "Global" else "Europe") }
+                            )
+                        }
                     }
                     Button(
                         onClick = {
@@ -94,31 +102,48 @@ fun ConnectionScreen(vm: DroidViewModel, state: DroidState) {
                         Spacer(Modifier.width(8.dp))
                         Text("Connect")
                     }
-                    if (!state.bridgeReady) LinearProgressIndicator(Modifier.fillMaxWidth())
-                    Text("Status: ${state.status}", style = MaterialTheme.typography.labelLarge)
+                    if (!state.bridgeReady) {
+                        LinearProgressIndicator(Modifier.fillMaxWidth())
+                        Text("Starting secure connection engine…",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    StatusPill(state.status)
                     val err = state.error ?: issue
-                    if (err != null) Text(err, color = MaterialTheme.colorScheme.error,
-                        style = MaterialTheme.typography.bodyMedium)
+                    if (err != null) InlineError(err)
                 }
             }
         }
         items(computers, key = { it.optString("id") }) { computer ->
-            ElevatedCard(onClick = {
-                url = computer.optString("relayClientUrl")
-                vm.connect(url, key)
-            }) {
-                Column(Modifier.fillMaxWidth().padding(18.dp)) {
-                    Text(computer.optString("name", "Computer"),
-                        style = MaterialTheme.typography.titleMedium)
-                    Text(computer.optString("status", "unknown"),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
+            GroupedItems {
+                GroupedActionRow(
+                    title = computer.optString("name", "Computer"),
+                    supportingText = "Registered computer · ${computer.optString("status", "unknown")}",
+                    onClick = {
+                        url = computer.optString("relayClientUrl")
+                        vm.connect(url, key)
+                    },
+                    leadingIcon = Icons.Filled.Computer
+                )
             }
         }
         item {
-            Text("Security: this experimental bridge uses relay TLS, but does not yet implement Factory's additional end-to-end X25519 handshake. Avoid sensitive sessions until parity is verified.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Surface(
+                color = MaterialTheme.colorScheme.tertiaryContainer,
+                shape = MaterialTheme.shapes.large
+            ) {
+                Column(Modifier.fillMaxWidth().padding(18.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("Experimental connection", style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onTertiaryContainer)
+                    Text(
+                        "TLS protects the connection to Factory's relay. Additional end-to-end " +
+                            "X25519 protection is not implemented yet. Avoid sensitive sessions.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onTertiaryContainer
+                    )
+                }
+            }
         }
     }
 }

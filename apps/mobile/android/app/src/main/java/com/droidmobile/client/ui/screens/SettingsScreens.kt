@@ -13,6 +13,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import com.droidmobile.client.ui.components.*
+import androidx.compose.material.icons.filled.*
 import com.droidmobile.client.backend.DroidState
 import com.droidmobile.client.backend.DroidViewModel
 import org.json.JSONObject
@@ -30,18 +32,52 @@ private val settingsPages = listOf(
 
 @Composable
 fun SettingsIndexScreen(open: (String) -> Unit) {
-    LazyColumn(contentPadding = PaddingValues(16.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        item { Text("Settings", style = MaterialTheme.typography.headlineLarge,
-            modifier = Modifier.padding(vertical = 12.dp)) }
-        items(settingsPages) { (route, title) ->
-            ElevatedCard(onClick = { open(route) }) {
-                Row(Modifier.fillMaxWidth().padding(20.dp),
-                    verticalAlignment = Alignment.CenterVertically) {
-                    Text(title, modifier = Modifier.weight(1f),
-                        style = MaterialTheme.typography.titleMedium)
-                    Icon(Icons.Filled.ArrowForward, null)
+    LazyColumn(
+        contentPadding = PaddingValues(20.dp),
+        verticalArrangement = Arrangement.spacedBy(20.dp)
+    ) {
+        item {
+            SectionHeading("Preferences", "Everything in one place, arranged by purpose.")
+        }
+        item {
+            SectionHeading("Your connection")
+            Spacer(Modifier.height(10.dp))
+            GroupedItems {
+                GroupedActionRow("Connection", "Registered computer and relay endpoint",
+                    onClick = { open("connection") }, leadingIcon = Icons.Filled.Link)
+                HorizontalDivider(Modifier.padding(start = 64.dp, end = 16.dp))
+                GroupedActionRow("Security", "Credentials and device protection",
+                    onClick = { open("security") }, leadingIcon = Icons.Filled.Lock)
+            }
+        }
+        item {
+            SectionHeading("App preferences")
+            Spacer(Modifier.height(10.dp))
+            GroupedItems {
+                listOf(
+                    Triple("appearance", "Appearance", Icons.Filled.Palette),
+                    Triple("language", "Language", Icons.Filled.Language),
+                    Triple("notifications", "Notifications", Icons.Filled.Notifications),
+                    Triple("battery", "Battery settings", Icons.Filled.BatterySaver)
+                ).forEachIndexed { index, setting ->
+                    GroupedActionRow(setting.second, null,
+                        onClick = { open(setting.first) }, leadingIcon = setting.third)
+                    if (index < 3) HorizontalDivider(
+                        Modifier.padding(start = 64.dp, end = 16.dp),
+                        color = MaterialTheme.colorScheme.outlineVariant
+                    )
                 }
+            }
+        }
+        item {
+            SectionHeading("Droid")
+            Spacer(Modifier.height(10.dp))
+            GroupedItems {
+                GroupedActionRow("Session defaults", "Default model and behaviour",
+                    onClick = { open("defaults") }, leadingIcon = Icons.Filled.Tune)
+                HorizontalDivider(Modifier.padding(start = 64.dp, end = 16.dp))
+                GroupedActionRow("About", "Version and project information",
+                    onClick = { open("about") }, leadingIcon = Icons.Filled.Info)
             }
         }
     }
@@ -64,10 +100,6 @@ fun SettingsDetailScreen(vm: DroidViewModel, state: DroidState, name: String, on
         if (name == "defaults") vm.fetch("settings.defaults", "settings.defaults")
     }
     Column(Modifier.fillMaxSize()) {
-        Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
-            Text(title, style = MaterialTheme.typography.headlineSmall)
-        }
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)) {
             when (name) {
@@ -100,28 +132,53 @@ fun SettingsDetailScreen(vm: DroidViewModel, state: DroidState, name: String, on
                         })
                     }
                     Text("Theme", style = MaterialTheme.typography.titleMedium)
-                    listOf("system", "light", "dark").forEach { option ->
-                        FilterChip(
-                            selected = darkMode == option,
-                            onClick = {
-                                darkMode = option
-                                prefs.edit().putString("theme", option).apply()
-                            },
-                            label = { Text(option.replaceFirstChar { it.uppercase() }) }
-                        )
+                    SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                        listOf("system", "light", "dark").forEachIndexed { index, option ->
+                            SegmentedButton(
+                                selected = darkMode == option,
+                                onClick = {
+                                    darkMode = option
+                                    prefs.edit().putString("theme", option).apply()
+                                },
+                                shape = SegmentedButtonDefaults.itemShape(index, 3),
+                                label = { Text(option.replaceFirstChar { it.uppercase() }) }
+                            )
+                        }
                     }
-                    Text("Typography uses the Material 3 Expressive type scale and adapts to system font scaling.")
                 }
                 "language" -> {
                     Text("App language", style = MaterialTheme.typography.titleMedium)
-                    listOf("system", "en", "ro").forEach { tag ->
-                        val label = when(tag) { "en" -> "English"; "ro" -> "Română"; else -> "System" }
-                        FilterChip(selected = language == tag,
-                            onClick = {
-                                language = tag
-                                prefs.edit().putString("language", tag).apply()
-                            }, label = { Text(label) })
+                    GroupedItems {
+                        listOf("system", "en", "ro").forEachIndexed { index, tag ->
+                            val label = when(tag) {
+                                "en" -> "English"
+                                "ro" -> "Română"
+                                else -> "Use device language"
+                            }
+                            ListItem(
+                                modifier = Modifier.clickable {
+                                    language = tag
+                                    prefs.edit().putString("language", tag).apply()
+                                },
+                                colors = ListItemDefaults.colors(
+                                    containerColor = MaterialTheme.colorScheme.surfaceContainerLow
+                                ),
+                                headlineContent = { Text(label) },
+                                trailingContent = {
+                                    RadioButton(selected = language == tag, onClick = {
+                                        language = tag
+                                        prefs.edit().putString("language", tag).apply()
+                                    })
+                                }
+                            )
+                            if (index < 2) HorizontalDivider(
+                                Modifier.padding(start = 16.dp, end = 16.dp),
+                                color = MaterialTheme.colorScheme.outlineVariant)
+                        }
                     }
+                    Text("Translation of the new native interface is still being completed.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 "defaults" -> {
                     Text("Daemon defaults", style = MaterialTheme.typography.titleMedium)
