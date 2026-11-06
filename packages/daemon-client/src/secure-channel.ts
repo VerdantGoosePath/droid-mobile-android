@@ -23,7 +23,7 @@ const MAX_FRAME = 8 * 1024 * 1024;
 const encoder = new TextEncoder();
 const decoder = new TextDecoder('utf-8', { fatal: true });
 const empty = new Uint8Array(0);
-const AD = encoder.encode(CHANNEL_LABEL);
+// libsodium accepts a UTF-8 string for associated data (as in Factory CLI).
 
 export type PinnedComputerIdentity = {
   algorithm: 'X25519';
@@ -197,6 +197,33 @@ export async function validatePinnedIdentity(identity: PinnedComputerIdentity): 
   return publicKey;
 }
 
+/** The CLI's wrappers return a native WASM pointer, not a JS byte array. */
+function releaseSecretstreamState(state: unknown): void {
+  if (state === null || state === undefined) return;
+  if (state instanceof Uint8Array) {
+    sodium.memzero(state);
+    return;
+  }
+  if (typeof state !== 'number' || !Number.isSafeInteger(state) || state <= 0)
+    throw new Error('Invalid native secretstream state');
+  const raw = (sodium as unknown as {
+    libsodium?: {
+      HEAPU8: Uint8Array;
+      _free(ptr: number): void;
+      _crypto_secretstream_xchacha20poly1305_statebytes(): number;
+    };
+  }).libsodium;
+  if (!raw || !(raw.HEAPU8 instanceof Uint8Array) ||
+      typeof raw._free !== 'function' ||
+      typeof raw._crypto_secretstream_xchacha20poly1305_statebytes !== 'function')
+    throw new Error('Native secretstream state cannot be securely erased');
+  const size = raw._crypto_secretstream_xchacha20poly1305_statebytes();
+  if (size <= 0 || state + size > raw.HEAPU8.length)
+    throw new Error('Invalid native secretstream state bounds');
+  sodium.memzero(raw.HEAPU8.subarray(state, state + size));
+  raw._free(state);
+}
+
 export class SecureRpcChannel {
   private readonly sym: NoiseState;
   private ephemeralPrivate: Uint8Array | null;
@@ -231,6 +258,7 @@ export class SecureRpcChannel {
       throw new Error('Invalid ephemeral keypair');
     const sym = new NoiseState(pinned, context);
     const privateKey = pair.privateKey.slice();
+    if (!pairForTest) sodium.memzero(pair.privateKey);
     try {
       sym.mixHash(pair.publicKey);
       const shared = sodium.crypto_scalarmult(privateKey, pinned);
@@ -288,7 +316,7 @@ export class SecureRpcChannel {
         sodium.memzero(this.txKey);
       }
       const ciphertext = sodium.crypto_secretstream_xchacha20poly1305_push(
-        this.txState, plaintext, AD, sodium.crypto_secretstream_xchacha20poly1305_TAG_MESSAGE,
+        this.txState, decoder.decode(plaintext), CHANNEL_LABEL, sodium.crypto_secretstream_xchacha20poly1305_TAG_MESSAGE,
       );
       const record = {
         ...(this.transmitHeader ? {
@@ -328,7 +356,7 @@ export class SecureRpcChannel {
       const ciphertext = sodium.from_base64(record.ciphertext, sodium.base64_variants.ORIGINAL);
       if (ciphertext.length < sodium.crypto_secretstream_xchacha20poly1305_ABYTES)
         throw new Error('Encrypted record too small');
-      const plaintext = sodium.crypto_secretstream_xchacha20poly1305_pull(this.rxState, ciphertext, AD);
+      const plaintext = sodium.crypto_secretstream_xchacha20poly1305_pull(this.rxState, ciphertext, CHANNEL_LABEL);
       if (!plaintext || plaintext.tag === sodium.crypto_secretstream_xchacha20poly1305_TAG_FINAL)
         throw new Error('Encrypted record rejected or stream finalized');
       return plaintext.message;
@@ -348,9 +376,14 @@ export class SecureRpcChannel {
     this.ephemeralPrivate = this.txKey = this.rxKey = null;
     this.transmitHeader = null;
     // libsodium-wrappers owns the opaque secretstream state; free if a byte buffer.
-    if (this.txState instanceof Uint8Array) sodium.memzero(this.txState);
-    if (this.rxState instanceof Uint8Array) sodium.memzero(this.rxState);
+    const receiveState = this.rxState;
+    const transmitState = this.txState;
     this.txState = this.rxState = null;
+    try {
+      releaseSecretstreamState(receiveState);
+    } finally {
+      releaseSecretstreamState(transmitState);
+    }
     this.sym.destroy();
   }
 }
