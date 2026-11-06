@@ -134,9 +134,14 @@ describe('Relay/Noise transport ordering and fail-closed policy', () => {
       method: 'daemon.authenticate', params: { apiKey: 'fk-synthetic-test' },
     });
     const onMessage = vi.fn();
+    const onError = vi.fn();
     socket.addEventListener('message', onMessage);
+    socket.addEventListener('error', onError);
     native.receive(new TextEncoder().encode('{"result":"ok"}'));
-    await vi.waitFor(() => expect(onMessage).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() =>
+      expect(onMessage.mock.calls.length + onError.mock.calls.length).toBeGreaterThan(0));
+    expect(onError).not.toHaveBeenCalled();
+    expect(onMessage).toHaveBeenCalledTimes(1);
   });
 
   it('does not open on a missing relay client ID', async () => {
