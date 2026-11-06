@@ -138,10 +138,10 @@ afterEach(() => {
 function begin(identity = PIN): FakeRelayAndDaemon {
   // The fake server hello was calculated for this deterministic client key.
   // Production code uses crypto_box_keypair() and its cryptographic RNG.
-  vi.spyOn(sodium, 'crypto_box_keypair').mockImplementation(() => {
+  vi.spyOn(sodium, 'crypto_box_keypair').mockImplementation((() => {
     const privateKey = new Uint8Array(32).fill(0x22);
     return { privateKey, publicKey: sodium.crypto_scalarmult_base(privateKey) };
-  });
+  }) as typeof sodium.crypto_box_keypair);
   vi.stubGlobal('WebSocket', FakeRelayAndDaemon as unknown as typeof WebSocket);
   vi.stubGlobal('CloseEvent', class FakeCloseEvent extends Event {
     code: number;
