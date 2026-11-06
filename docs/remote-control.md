@@ -4,13 +4,15 @@ This fork connects Droid Mobile to an existing `droid daemon --remote-control`
 through Factory's hosted WebSocket relay. No Tailscale, reverse proxy,
 LAN port forwarding, inbound firewall rule, or PC helper is needed.
 
-> **Experimental:** this path is implemented from Factory's publicly documented
-> Computers API and protocol observations of the distributed CLI binaries.
-> It has not yet been verified against an authenticated live Factory account.
-> The official client may negotiate an additional X25519 end-to-end secure
-> channel that this branch **does not implement**. TLS protects traffic to the
-> Factory relay, but does not provide equivalent end-to-end protections.
-> Do not use for sensitive repositories until this is resolved and reviewed.
+> **Experimental and not yet live-verified:** the relay and secure-channel
+> implementation was reconstructed from both distributed Droid CLI binaries
+> and the publicly documented Factory Computers API. It now implements the
+> pinned X25519 Noise NK handshake and XChaCha20-Poly1305 secretstream
+> instead of sending plaintext daemon RPC across the relay. Independent
+> protocol test vectors exercise the cryptographic transcript and rejection
+> paths. This is **not proof of end-to-end compatibility** with a running
+> Factory account or endorsement by Factory. Do not use for sensitive
+> repositories until a real-device interoperability test and security review.
 
 ## On the PC
 
@@ -36,28 +38,39 @@ Android app. Factory's API returns a separate `relayClientUrl` for clients.
 Alternatively, paste the `wss://relay.factory.ai/v0/computer/…/agent` address
 shown by the CLI directly into the URL field. The app recognises the Factory
 relay host and converts `/agent` to `/client`. It never puts the API key in the
-URL. This alternative does not require the computer-listing API.
+URL. This alternative skips the list UI but still requires the authenticated\ncomputer-detail API for cryptographic identity verification.
 
 The connection remains dependent on your PC staying online and keeping
 `droid daemon --remote-control` running.
 
 ## Implementation
 
-The connection has two sequential stages:
+The connection has **four sequential stages**:
 
-1. `relay.authenticate` with `apiKey`, expecting `relay.auth_ok`.
-2. `daemon.authenticate` performed by `@factory/droid-sdk` only after the
-   authenticated WebSocket is exposed as open.
+1. Resolve `relayClientUrl` and its `computerIdentity` over authenticated
+   HTTPS with `GET /api/v0/computers/{computerId}`, validating the relay
+   host, computer ID, X25519 public key and BLAKE2b-128 `keyId`.
+2. Establish `wss://relay.factory.ai/…/client`, send `relay.authenticate`
+   with the API key and require a `relay.auth_ok` **with `clientId`**.
+3. Perform Factory secure-channel version 2: bind the Noise NK
+   (Noise_NK_25519_ChaChaPoly_SHA256) transcript to both the computer
+   and relay-assigned client ID, verify the computer identity, derive
+   directional keys and initialize XChaCha20-Poly1305 secretstream.
+4. Expose the WebSocket as open to `@factory/droid-sdk` only after
+   the secure channel authenticates the PC. `daemon.authenticate` and all
+   subsequent JSON-RPC messages travel inside encrypted binary records.
 
-Because the current public high-level `connectToDaemon()` facade does not
-offer an injectable transport, the relay adapter registers a scoped WebSocket
-constructor that delays the `open` event until relay authentication succeeds.
-It restores the native constructor after connection credentials are released.
+The client rejects plaintext downgrade attempts and invalid/unknown secure
+records. It **does not** silently retry using an unencrypted relay. The
+high-level `connectToDaemon()` facade does not expose a compatible
+transport injection point, so the scoped WebSocket adapter intercepts
+connections to the exact verified relay URL and restores the native
+constructor on teardown.
 
-The Factory API exposes optional `computerIdentity` (X25519) alongside the
-client URL. The current implementation detects and warns about the presence of
-that identity but does not negotiate the extra secure channel. Implementing
-and validating it is a release-blocking security task.
+**Important:** A pasted `/agent` URL is only a computer identifier and
+address. The app **still calls the Factory Computers API** to independently
+retrieve its pinned identity before connecting. If this lookup fails or the
+identity is absent/mismatched, the connection is refused.
 
 ## Build and signing
 
