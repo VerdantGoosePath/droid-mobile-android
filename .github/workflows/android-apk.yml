@@ -1,21 +1,16 @@
-name: Android APK (signed)
-
+name: Compose CI & installable APK
 on:
   push:
-    branches: [main, feat/factory-relay-remote-control]
+    branches: [main, feat/compose-expressive-native]
   pull_request:
   workflow_dispatch:
-
 permissions:
   contents: read
-
 concurrency:
-  group: apk-${{ github.ref }}
+  group: compose-${{ github.ref }}
   cancel-in-progress: true
-
 jobs:
-  android-release:
-    name: Build and verify installable release APK
+  build:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -28,30 +23,20 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
-      # ubuntu-latest already provides the Android SDK. The setup-android@v3
-      # action tries to install the removed legacy 'tools' package on this image.
-      - name: Ensure Android API 36 and build tools
+      - name: Install npm workspace packages
+        run: npm install --no-audit --no-fund
+      - name: Typecheck native bridge
+        run: npm run typecheck -w @droidmobile/native-bridge
+      - name: Build SDK host assets
+        run: npm run build -w @droidmobile/native-bridge
+      - name: Install Android SDK
         shell: bash
         run: |
+          set -euo pipefail
           sdkmanager_bin="$(find "${ANDROID_HOME:-/usr/local/lib/android/sdk}/cmdline-tools" -type f -name sdkmanager | sort -V | tail -1)"
           test -n "$sdkmanager_bin"
           yes | "$sdkmanager_bin" --licenses >/dev/null || true
-          "$sdkmanager_bin" 'platforms;android-36' 'build-tools;36.0.0'
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Compile production web app
-        env:
-          VITE_DROID_BUILD: release
-        run: npm run build -w @droidmobile/mobile
-
-      - name: Synchronize release Capacitor configuration
-        env:
-          CAPACITOR_VARIANT: release
-        working-directory: apps/mobile
-        run: npx cap sync android
-
+          "$sdkmanager_bin" 'platforms;android-37.0' 'build-tools;36.0.0'
       - name: Configure release signing
         shell: bash
         env:
@@ -61,50 +46,42 @@ jobs:
           KEY_PASSWORD: ${{ secrets.DROID_RELEASE_KEY_PASSWORD }}
         run: |
           set -euo pipefail
-          signing_dir="$RUNNER_TEMP/droid-signing"
-          mkdir -p "$signing_dir"
+          directory="$RUNNER_TEMP/droid-signing"
+          mkdir -p "$directory"
           if [[ -n "$KEYSTORE_B64" && -n "$STORE_PASSWORD" && -n "$KEY_ALIAS" && -n "$KEY_PASSWORD" ]]; then
-            printf '%s' "$KEYSTORE_B64" | base64 --decode > "$signing_dir/release.jks"
-            echo 'Using the repository release signing key'
+            printf '%s' "$KEYSTORE_B64" | base64 --decode > "$directory/release.jks"
           else
-            # Installable but not upgrade-compatible across runs. Add four repository
-            # signing secrets for a reproducible app identity and in-place updates.
             STORE_PASSWORD="$(openssl rand -hex 16)"
             KEY_PASSWORD="$STORE_PASSWORD"
             KEY_ALIAS=ci-ephemeral
             keytool -genkeypair -noprompt -keyalg RSA -keysize 3072 \
-              -validity 30 -alias "$KEY_ALIAS" -keystore "$signing_dir/release.jks" \
+              -validity 30 -alias "$KEY_ALIAS" -keystore "$directory/release.jks" \
               -storepass "$STORE_PASSWORD" -keypass "$KEY_PASSWORD" \
-              -dname 'CN=Droid Mobile CI, OU=Testing, O=Self-hosted, C=GB'
-            echo 'WARNING: ephemeral signing key; APK cannot upgrade another run in place'
+              -dname 'CN=Droid Mobile Compose CI, O=Testing, C=GB'
+            echo 'WARNING: ephemeral signing certificate, not stable across runs'
           fi
           {
             echo 'storeFile=release.jks'
             printf 'storePassword=%s\n' "$STORE_PASSWORD"
             printf 'keyAlias=%s\n' "$KEY_ALIAS"
             printf 'keyPassword=%s\n' "$KEY_PASSWORD"
-          } > "$signing_dir/keystore.properties"
-          chmod 600 "$signing_dir/"*
-          echo "DROID_KEYSTORE_PROPERTIES=$signing_dir/keystore.properties" >> "$GITHUB_ENV"
-
-      - name: Assemble release APK
+          } > "$directory/keystore.properties"
+          chmod 600 "$directory/"*
+          echo "DROID_KEYSTORE_PROPERTIES=$directory/keystore.properties" >> "$GITHUB_ENV"
+      - name: Assemble Compose release
         working-directory: apps/mobile/android
         run: bash ./gradlew --no-daemon assembleRelease
-
-      - name: Verify APK signature
+      - name: Verify installable APK
         shell: bash
         run: |
           set -euo pipefail
           apk=apps/mobile/android/app/build/outputs/apk/release/app-release.apk
           test -s "$apk"
           apksigner_bin="$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -1)"
-          test -x "$apksigner_bin"
-          "$apksigner_bin" verify --verbose --print-certs "$apk" | sed -E 's/(Signer #1 certificate SHA-256 digest:).*/\1 [redacted]/'
-
-      - name: Upload installable APK
-        uses: actions/upload-artifact@v4
+          "$apksigner_bin" verify --verbose "$apk"
+      - uses: actions/upload-artifact@v4
         with:
-          name: droid-mobile-release-${{ github.run_number }}
+          name: droid-mobile-compose-apk-${{ github.run_number }}
           path: apps/mobile/android/app/build/outputs/apk/release/app-release.apk
-          if-no-files-found: error
           retention-days: 30
+          if-no-files-found: error

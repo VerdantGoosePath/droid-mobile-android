@@ -1,46 +1,35 @@
-apply plugin: 'com.android.application'
-apply plugin: 'org.jetbrains.kotlin.android'
-
-// One source of truth: the web layer shows the same apps/mobile/package.json version.
-def appPackageJson = new groovy.json.JsonSlurper().parse(file('../../package.json'))
-def appPackageVersion = appPackageJson.version
-def appPackageVersionCode = appPackageJson.androidVersionCode as int
-
-// Release signing material lives outside the tree that is committed: secrets/ is git-ignored.
-// DROID_KEYSTORE_PROPERTIES overrides the location. Relative storeFile values resolve against
-// the properties file. Created by tools/dev/new-release-keystore.ps1.
-def keystorePropsFile = System.getenv('DROID_KEYSTORE_PROPERTIES')
-        ? new File(System.getenv('DROID_KEYSTORE_PROPERTIES'))
-        : rootProject.file('../../../secrets/keystore.properties')
-def keystoreProps = new Properties()
-if (keystorePropsFile.isFile()) {
-    keystorePropsFile.withInputStream { keystoreProps.load(it) }
+plugins {
+    id 'com.android.application'
+    id 'org.jetbrains.kotlin.plugin.compose'
 }
 
+def signingFile = System.getenv('DROID_KEYSTORE_PROPERTIES') ?
+    new File(System.getenv('DROID_KEYSTORE_PROPERTIES')) :
+    rootProject.file('../../../secrets/keystore.properties')
+def signing = new Properties()
+if (signingFile.isFile()) signingFile.withInputStream { signing.load(it) }
+
 android {
-    namespace = "com.droidmobile.client"
-    compileSdk = rootProject.ext.compileSdkVersion
+    namespace 'com.droidmobile.client'
+    compileSdk 37
     defaultConfig {
-        applicationId "com.droidmobile.client"
-        minSdkVersion rootProject.ext.minSdkVersion
-        targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode appPackageVersionCode
-        versionName appPackageVersion
-        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
-        aaptOptions {
-             // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
-             // Default: https://android.googlesource.com/platform/frameworks/base/+/282e181b58cf72b6ca770dc7ca5f91f135444502/tools/aapt/AaptAssets.cpp#61
-            ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
-        }
+        applicationId 'com.droidmobile.client'
+        minSdk 26
+        targetSdk 36
+        versionCode 3
+        versionName '2.0.0-native-alpha'
+        testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
     }
+    buildFeatures { compose true; buildConfig true }
+    compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
+kotlin { compilerOptions { jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17 } }
     signingConfigs {
         release {
-            if (keystorePropsFile.isFile()) {
-                storeFile new File(keystorePropsFile.parentFile, keystoreProps['storeFile'] as String)
-                storePassword keystoreProps['storePassword'] as String
-                keyAlias keystoreProps['keyAlias'] as String
-                keyPassword keystoreProps['keyPassword'] as String
-                // v1 is dropped automatically at minSdk 24; v3 is opt-in in AGP.
+            if (signingFile.isFile()) {
+                storeFile new File(signingFile.parentFile, signing['storeFile'] as String)
+                storePassword signing['storePassword'] as String
+                keyAlias signing['keyAlias'] as String
+                keyPassword signing['keyPassword'] as String
                 enableV2Signing true
                 enableV3Signing true
             }
@@ -49,51 +38,40 @@ android {
     buildTypes {
         release {
             minifyEnabled false
-            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
             signingConfig signingConfigs.release
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
+        debug { applicationIdSuffix '.dev' }
     }
+    packaging { resources { excludes += ['/META-INF/{AL2.0,LGPL2.1}'] } }
 }
-
-// A release artifact must never silently come out unsigned or debug-signed.
 gradle.taskGraph.whenReady { graph ->
-    def packagesRelease = graph.allTasks.any {
-        it.project == project && it.name =~ /^(assemble|bundle|package)Release$/
-    }
-    if (packagesRelease && !keystorePropsFile.isFile()) {
-        throw new GradleException(
-            "Release signing config not found: ${keystorePropsFile}. " +
-            "Run tools/dev/new-release-keystore.ps1 once (see docs/release.md).")
+    if (graph.allTasks.any { it.project == project && it.name in ['assembleRelease','bundleRelease','packageRelease'] }
+        && !signingFile.isFile()) {
+        throw new GradleException("Release signing config missing: ${signingFile}")
     }
 }
-
-repositories {
-    flatDir{
-        dirs '../capacitor-cordova-android-plugins/src/main/libs', 'libs'
-    }
-}
-
 dependencies {
-    implementation fileTree(include: ['*.jar'], dir: 'libs')
-    implementation "androidx.appcompat:appcompat:$androidxAppCompatVersion"
-    implementation "androidx.coordinatorlayout:coordinatorlayout:$androidxCoordinatorLayoutVersion"
-    implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
-    implementation project(':capacitor-android')
-    // Same version the capacitor-firebase-messaging plugin pulls in; the app calls it directly.
-    implementation 'com.google.firebase:firebase-messaging:25.0.1'
-    testImplementation "junit:junit:$junitVersion"
-    androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
-    androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
-    implementation project(':capacitor-cordova-android-plugins')
-}
-
-apply from: 'capacitor.build.gradle'
-
-try {
-    def servicesJSON = file('google-services.json')
-    if (servicesJSON.text) {
-        apply plugin: 'com.google.gms.google-services'
-    }
-} catch(Exception e) {
-    logger.info("google-services.json not found, google-services plugin not applied. Push Notifications won't work")
+    def composeBom = platform('androidx.compose:compose-bom:2026.09.00')
+    implementation composeBom
+    androidTestImplementation composeBom
+    implementation 'androidx.compose.ui:ui'
+    implementation 'androidx.compose.ui:ui-tooling-preview'
+    debugImplementation 'androidx.compose.ui:ui-tooling'
+    implementation 'androidx.compose.foundation:foundation'
+    implementation 'androidx.compose.material3:material3:1.5.0-rc01'
+    implementation 'androidx.compose.material3:material3-adaptive-navigation-suite:1.4.0'
+    implementation 'androidx.compose.material:material-icons-extended'
+    implementation 'androidx.navigation:navigation-compose:2.10.2'
+    implementation 'androidx.activity:activity-compose:1.13.0'
+    implementation 'androidx.lifecycle:lifecycle-runtime-compose:2.10.0'
+    implementation 'androidx.lifecycle:lifecycle-viewmodel-compose:2.10.0'
+    implementation 'androidx.lifecycle:lifecycle-viewmodel-ktx:2.10.0'
+    implementation 'androidx.core:core-ktx:1.19.1'
+    implementation 'androidx.webkit:webkit:1.17.1'
+    implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2'
+    testImplementation 'junit:junit:4.13.2'
+    androidTestImplementation 'androidx.test.ext:junit:1.3.0'
+    androidTestImplementation 'androidx.compose.ui:ui-test-junit4'
+    debugImplementation 'androidx.compose.ui:ui-test-manifest'
 }
