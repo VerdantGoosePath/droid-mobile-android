@@ -1,5 +1,11 @@
 package com.droidmobile.client.ui.screens
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import android.Manifest
+import android.os.Build
+import android.content.pm.PackageManager
+import androidx.core.content.ContextCompat
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -96,6 +102,16 @@ fun SettingsDetailScreen(vm: DroidViewModel, state: DroidState, name: String, on
     var model by remember { mutableStateOf("") }
     var autonomy by remember { mutableStateOf("") }
     var effort by remember { mutableStateOf("") }
+    val notificationManager = context.getSystemService(android.content.Context.NOTIFICATION_SERVICE)
+        as android.app.NotificationManager
+    var notificationsAllowed by remember {
+        mutableStateOf(notificationManager.areNotificationsEnabled())
+    }
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        notificationsAllowed = granted
+    }
     val title = settingsPages.find { it.first == name }?.second ?: "Settings"
     LaunchedEffect(name) {
         if (name == "defaults") vm.fetch("settings.defaults", "settings.defaults")
@@ -239,17 +255,49 @@ fun SettingsDetailScreen(vm: DroidViewModel, state: DroidState, name: String, on
                     }) { Text("Save defaults") }
                 }
                 "notifications" -> {
-                    Text("Android notification preferences", style = MaterialTheme.typography.titleMedium)
-                    val manager = context.getSystemService(android.content.Context.NOTIFICATION_SERVICE)
-                        as android.app.NotificationManager
-                    Text("Notifications ${if (manager.areNotificationsEnabled()) "enabled" else "disabled"} by the OS.")
-                    FilledTonalButton(onClick = {
-                        val intent = android.content.Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS)
-                            .putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, context.packageName)
-                        context.startActivity(intent)
-                    }) { Text("Open notification settings") }
-                    Text("Foreground connection and push notifications need a native service implementation.",
-                        style = MaterialTheme.typography.bodySmall)
+                    SectionHeading("Alerts and permissions",
+                        "Control how Android notifies you about Droid.")
+                    GroupedItems {
+                        ListItem(
+                            colors = ListItemDefaults.colors(
+                                containerColor = MaterialTheme.colorScheme.surfaceContainerLow
+                            ),
+                            leadingContent = { Icon(Icons.Filled.Notifications, null) },
+                            headlineContent = { Text("Notifications") },
+                            supportingContent = {
+                                Text(if (notificationsAllowed)
+                                    "Allowed by Android" else "Disabled or not permitted")
+                            },
+                            trailingContent = {
+                                StatusPill(if (notificationsAllowed) "Allowed" else "Blocked")
+                            }
+                        )
+                    }
+                    if (Build.VERSION.SDK_INT >= 33 &&
+                        ContextCompat.checkSelfPermission(
+                            context, Manifest.permission.POST_NOTIFICATIONS
+                        ) != PackageManager.PERMISSION_GRANTED
+                    ) {
+                        Button(onClick = {
+                            permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                        }, modifier = Modifier.fillMaxWidth()) {
+                            Text("Allow notifications")
+                        }
+                    }
+                    FilledTonalButton(
+                        modifier = Modifier.fillMaxWidth(),
+                        onClick = {
+                            val intent = android.content.Intent(
+                                android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS
+                            ).putExtra(
+                                android.provider.Settings.EXTRA_APP_PACKAGE, context.packageName
+                            )
+                            context.startActivity(intent)
+                        }
+                    ) { Text("Manage Android notification settings") }
+                    Text("Background connection service and remote push alerts are not yet available in this experimental native build.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 "battery" -> {
                     SectionHeading("Battery optimisation",
