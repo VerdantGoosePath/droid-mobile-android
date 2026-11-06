@@ -41,6 +41,12 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Check secure relay TypeScript types
+        run: npm run typecheck
+
+      - name: Verify encrypted channel and relay tests
+        run: npx vitest run --project unit packages/daemon-client/src/secure-channel.test.ts packages/daemon-client/src/relay.test.ts
+
       - name: Compile production web app
         env:
           VITE_DROID_BUILD: release
