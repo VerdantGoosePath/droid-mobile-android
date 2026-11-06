@@ -66,7 +66,7 @@ fun ConnectionScreen(vm: DroidViewModel, state: DroidState) {
                         onClick = {
                             searching = true; issue = null
                             scope.launch {
-                                try { computers = vm.repository.discoverComputers(region) }
+                                try { computers = vm.repository.discoverComputers(region, key) }
                                 catch (e: Exception) { issue = e.message }
                                 finally { searching = false }
                             }

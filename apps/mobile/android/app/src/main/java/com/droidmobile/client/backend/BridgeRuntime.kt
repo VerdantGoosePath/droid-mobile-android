@@ -56,7 +56,8 @@ class BridgeRuntime(context: Context) : BackendTransport {
             if (!isMainFrame || sourceOrigin.toString() != origin) return@addWebMessageListener
             val raw = message.data ?: return@addWebMessageListener
             handler.post {
-                if (JSONObject(raw).optString("event") == "host.ready") {
+                val parsed = runCatching { JSONObject(raw) }.getOrNull() ?: return@post
+                if (parsed.optString("event") == "host.ready") {
                     ready = true
                     while (pending.isNotEmpty()) evaluateCommand(pending.removeFirst())
                 }

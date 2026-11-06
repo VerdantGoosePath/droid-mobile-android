@@ -9,6 +9,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
@@ -95,7 +96,7 @@ class DroidRepository(
         val deferred = CompletableDeferred<Any?>()
         pending[id] = deferred
         transport.send(JSONObject().put("id", id).put("op", op).put("args", args).toString())
-        return try { deferred.await() } finally { pending.remove(id) }
+        return try { withTimeout(45_000L) { deferred.await() } } finally { pending.remove(id) }
     }
     private fun JSONArray.toObjects(): List<JSONObject> =
         (0 until length()).mapNotNull { optJSONObject(it) }
@@ -170,8 +171,9 @@ class DroidRepository(
     }
 
     /** Android-only REST discovery, to avoid CORS inside the isolated SDK host. */
-    suspend fun discoverComputers(region: String = "global"): List<JSONObject> = withContext(Dispatchers.IO) {
-        val token = apiKey ?: secrets.read() ?: throw IllegalArgumentException("API key required")
+    suspend fun discoverComputers(region: String = "global", suppliedKey: String? = null): List<JSONObject> = withContext(Dispatchers.IO) {
+        val token = suppliedKey?.takeIf { it.isNotBlank() } ?: apiKey ?: secrets.read()
+            ?: throw IllegalArgumentException("API key required")
         val host = if (region == "eu") "https://api.eu.factory.ai" else "https://api.factory.ai"
         val client = (URL("$host/api/v0/computers").openConnection() as HttpURLConnection)
         try {
