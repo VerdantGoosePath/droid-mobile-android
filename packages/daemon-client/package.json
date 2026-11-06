@@ -15,7 +15,8 @@
     "test:integration": "vitest run --root ../.. --project integration packages/daemon-client"
   },
   "dependencies": {
-    "@factory/droid-sdk": "0.9.1"
+    "@factory/droid-sdk": "0.9.1",
+    "libsodium-wrappers": "0.8.4"
   },
   "devDependencies": {
     "@types/node": "26.6.4",
