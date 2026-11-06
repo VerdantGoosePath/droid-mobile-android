@@ -89,7 +89,7 @@ jobs:
 
       - name: Assemble release APK
         working-directory: apps/mobile/android
-        run: ./gradlew --no-daemon assembleRelease
+        run: bash ./gradlew --no-daemon assembleRelease
 
       - name: Verify APK signature
         shell: bash
