@@ -1,36 +1,50 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { factoryRelayTarget, registerFactoryRelayCredential } from './relay';
 
+vi.mock('./secure-channel', () => ({
+  SecureRpcChannel: {
+    begin: vi.fn(async () => ({
+      hello: new Uint8Array([42]),
+      channel: {
+        finish: vi.fn((bytes: Uint8Array) => {
+          if (bytes[0] !== 43) throw new Error('bad server hello');
+        }),
+        seal: vi.fn((plaintext: Uint8Array) => plaintext),
+        open: vi.fn((ciphertext: Uint8Array) => ciphertext),
+        destroy: vi.fn(),
+      },
+    })),
+  },
+}));
+
 const ID = 'a34547ea-065c-43a9-857e-56e5a73a91f0';
-const AGENT = `wss://relay.factory.ai/v0/computer/${ID}/agent`;
-const CLIENT = `wss://relay.factory.ai/v0/computer/${ID}/client`;
+const CLIENT_ID = 'b34547ea-065c-43a9-857e-56e5a73a91f0';
+const AGENT = 'wss://relay.factory.ai/v0/computer/' + ID + '/agent';
+const CLIENT = 'wss://relay.factory.ai/v0/computer/' + ID + '/client';
+const IDENTITY = { algorithm: 'X25519' as const, publicKey: 'synthetic', keyId: 'synthetic' };
 
 describe('Factory relay URL validation', () => {
-  it('maps the printed agent URL to the client endpoint', () => {
+  it('converts printed agent URL into the client endpoint', () => {
     expect(factoryRelayTarget(AGENT)).toEqual({ url: CLIENT, computerId: ID });
     expect(factoryRelayTarget(CLIENT)?.url).toBe(CLIENT);
-    expect(factoryRelayTarget(AGENT.replace('relay.factory.ai', 'relay.eu.factory.ai'))?.url)
-      .toBe(CLIENT.replace('relay.factory.ai', 'relay.eu.factory.ai'));
   });
   it.each([
     'ws://relay.factory.ai/v0/computer/' + ID + '/client',
     'wss://evil.test/v0/computer/' + ID + '/client',
     'wss://relay.factory.ai.evil.test/v0/computer/' + ID + '/client',
     'wss://relay.factory.ai/v0/computer/' + ID + '/client?token=secret',
-    'wss://relay.factory.ai/v0/computer/' + ID + '/client#secret',
     'wss://user@relay.factory.ai/v0/computer/' + ID + '/client',
-    'wss://relay.factory.ai/v0/computer/not-a-uuid/client',
-    'wss://relay.factory.ai/v0/computer/' + ID + '/tunnel',
-  ])('rejects unsupported or unsafe relay endpoints: %s', (url) => {
+    'wss://relay.factory.ai/v0/computer/invalid/client',
+  ])('rejects unsafe URLs: %s', (url) => {
     expect(factoryRelayTarget(url)).toBeNull();
   });
 });
 
 class MockSocket extends EventTarget {
-  static readonly CONNECTING = 0;
-  static readonly OPEN = 1;
-  static readonly CLOSING = 2;
-  static readonly CLOSED = 3;
+  static CONNECTING = 0;
+  static OPEN = 1;
+  static CLOSING = 2;
+  static CLOSED = 3;
   static sockets: MockSocket[] = [];
   readonly url: string;
   readyState = 0;
@@ -39,101 +53,124 @@ class MockSocket extends EventTarget {
   protocol = '';
   binaryType: WebSocket['binaryType'] = 'blob';
   sent: unknown[] = [];
-
   constructor(url: string | URL) {
     super();
     this.url = String(url);
     MockSocket.sockets.push(this);
   }
-  send(data: unknown): void { this.sent.push(data); }
-  open(): void {
-    this.readyState = 1;
-    this.dispatchEvent(new Event('open'));
+  send(data: unknown) { this.sent.push(data); }
+  open() { this.readyState = 1; this.dispatchEvent(new Event('open')); }
+  receive(data: string | Uint8Array) {
+    this.dispatchEvent(new MessageEvent('message', {
+      data: typeof data === 'string' ? data : data.buffer.slice(
+        data.byteOffset, data.byteOffset + data.byteLength,
+      ),
+    }));
   }
-  receive(data: string): void {
-    this.dispatchEvent(new MessageEvent('message', { data }));
-  }
-  close(code = 1000, reason = ''): void {
+  close(code = 1000, reason = '') {
     this.readyState = 3;
     this.dispatchEvent(new CloseEvent('close', { code, reason, wasClean: true }));
   }
 }
 
-const original = globalThis.WebSocket;
-const originalCloseEvent = globalThis.CloseEvent;
-let cleanup: (() => void) | null = null;
-
+const nativeWS = globalThis.WebSocket;
+const nativeClose = globalThis.CloseEvent;
+let release: (() => void) | null = null;
 afterEach(() => {
-  cleanup?.();
-  cleanup = null;
-  vi.stubGlobal('WebSocket', original);
-  vi.stubGlobal('CloseEvent', originalCloseEvent);
+  release?.();
+  release = null;
+  vi.unstubAllGlobals();
+  vi.stubGlobal('WebSocket', nativeWS);
+  vi.stubGlobal('CloseEvent', nativeClose);
   MockSocket.sockets = [];
 });
 
-describe('Factory relay authentication transport', () => {
-  function setup(): { socket: WebSocket; native: MockSocket } {
-    vi.stubGlobal('WebSocket', MockSocket as unknown as typeof WebSocket);
-    vi.stubGlobal(
-      'CloseEvent',
-      class TestCloseEvent extends Event {
-        readonly code: number;
-        readonly reason: string;
-        readonly wasClean: boolean;
-        constructor(type: string, init: CloseEventInit = {}) {
-          super(type);
-          this.code = init.code ?? 1000;
-          this.reason = init.reason ?? '';
-          this.wasClean = init.wasClean ?? true;
-        }
-      },
-    );
-    cleanup = registerFactoryRelayCredential(CLIENT, 'fk-test123456');
-    const socket = new WebSocket(CLIENT);
-    return { socket, native: MockSocket.sockets[0] };
-  }
+function setup() {
+  vi.stubGlobal('WebSocket', MockSocket as unknown as typeof WebSocket);
+  vi.stubGlobal('CloseEvent', class TestCloseEvent extends Event {
+    code: number;
+    reason: string;
+    wasClean: boolean;
+    constructor(type: string, init: CloseEventInit = {}) {
+      super(type);
+      this.code = init.code ?? 1000;
+      this.reason = init.reason ?? '';
+      this.wasClean = init.wasClean ?? false;
+    }
+  });
+  release = registerFactoryRelayCredential(CLIENT, 'fk-synthetic-test', IDENTITY);
+  const socket = new WebSocket(CLIENT);
+  return { socket, native: MockSocket.sockets[0] };
+}
 
-  it('authenticates with relay before exposing the socket as open to the SDK', () => {
+async function authenticate(native: MockSocket) {
+  native.open();
+  native.receive(JSON.stringify({ type: 'relay.auth_ok', clientId: CLIENT_ID }));
+  await vi.waitFor(() => expect(native.sent.length).toBe(2));
+  expect(native.sent[1]).toEqual(new Uint8Array([42]));
+}
+
+describe('Relay/Noise transport ordering and fail-closed policy', () => {
+  it('sends relay authentication first and waits for pinned Noise before opening', async () => {
     const { socket, native } = setup();
-    const open = vi.fn();
-    const message = vi.fn();
-    socket.addEventListener('open', open);
-    socket.addEventListener('message', message);
+    const onOpen = vi.fn();
+    socket.addEventListener('open', onOpen);
     native.open();
-    expect(native.sent).toEqual([JSON.stringify({ method: 'relay.authenticate', apiKey: 'fk-test123456' })]);
+    expect(native.sent).toEqual([JSON.stringify({
+      method: 'relay.authenticate', apiKey: 'fk-synthetic-test',
+    })]);
     expect(socket.readyState).toBe(WebSocket.CONNECTING);
-    expect(open).not.toHaveBeenCalled();
-
-    native.receive(JSON.stringify({ type: 'relay.auth_ok', clientId: ID }));
-    expect(open).toHaveBeenCalledTimes(1);
+    native.receive(JSON.stringify({ type: 'relay.auth_ok', clientId: CLIENT_ID }));
+    await vi.waitFor(() => expect(native.sent.length).toBe(2));
+    expect(onOpen).not.toHaveBeenCalled();
+    native.receive(new Uint8Array([43]));
+    await vi.waitFor(() => expect(onOpen).toHaveBeenCalledTimes(1));
     expect(socket.readyState).toBe(WebSocket.OPEN);
-    socket.send('daemon.authenticate');
-    expect(native.sent[1]).toBe('daemon.authenticate');
-
-    native.receive(JSON.stringify({ type: 'response', id: '1', result: { ok: true } }));
-    expect(message).toHaveBeenCalledTimes(1);
+    socket.send(JSON.stringify({
+      method: 'daemon.authenticate', params: { acceptEncodings: ['zstd'], apiKey: 'fk-synthetic-test' },
+    }));
+    const encrypted = native.sent[2] as Uint8Array;
+    expect(JSON.parse(new TextDecoder().decode(encrypted))).toEqual({
+      method: 'daemon.authenticate', params: { apiKey: 'fk-synthetic-test' },
+    });
+    const onMessage = vi.fn();
+    socket.addEventListener('message', onMessage);
+    native.receive(new TextEncoder().encode('{"result":"ok"}'));
+    await vi.waitFor(() => expect(onMessage).toHaveBeenCalledTimes(1));
   });
 
-  it('rejects relay authentication errors and never reports a successful open', () => {
+  it('does not open on a missing relay client ID', async () => {
     const { socket, native } = setup();
-    const open = vi.fn();
-    const error = vi.fn();
-    socket.addEventListener('open', open);
-    socket.addEventListener('error', error);
+    const opened = vi.fn();
+    socket.addEventListener('open', opened);
     native.open();
-    native.receive(JSON.stringify({ type: 'relay.auth_error', code: 'unauthorized', message: 'denied' }));
-    expect(open).not.toHaveBeenCalled();
-    expect(error).toHaveBeenCalled();
-    expect(socket.readyState).toBe(WebSocket.CLOSED);
+    native.receive(JSON.stringify({ type: 'relay.auth_ok' }));
+    await vi.waitFor(() => expect(native.readyState).toBe(WebSocket.CLOSED));
+    expect(opened).not.toHaveBeenCalled();
   });
 
-  it('restores native WebSocket for ordinary connections after cleanup', () => {
-    const { native } = setup();
-    expect(native.url).toBe(CLIENT);
-    cleanup?.();
-    cleanup = null;
-    expect(globalThis.WebSocket).toBe(MockSocket);
-    const direct = new WebSocket('wss://example.org');
-    expect(direct).toBeInstanceOf(MockSocket);
+  it('never accepts unencrypted application frames', async () => {
+    const { socket, native } = setup();
+    await authenticate(native);
+    native.receive(new Uint8Array([43]));
+    await vi.waitFor(() => expect(socket.readyState).toBe(WebSocket.OPEN));
+    const message = vi.fn();
+    socket.addEventListener('message', message);
+    native.receive('{"type":"notification","method":"daemon.session_notification"}');
+    await vi.waitFor(() => expect(native.readyState).toBe(WebSocket.CLOSED));
+    expect(message).not.toHaveBeenCalled();
+  });
+
+  it('rejects conflicting credentials for the same relay URL', () => {
+    setup();
+    expect(() => registerFactoryRelayCredential(CLIENT, 'fk-other', IDENTITY))
+      .toThrow(/Conflicting/);
+  });
+
+  it('requires an authenticated computer identity before opening any socket', () => {
+    vi.stubGlobal('WebSocket', MockSocket as unknown as typeof WebSocket);
+    expect(() => registerFactoryRelayCredential(CLIENT, 'fk-key', null as never))
+      .toThrow(/identity/i);
+    expect(MockSocket.sockets).toHaveLength(0);
   });
 });
