@@ -178,14 +178,14 @@ class AuthenticatedRelaySocket extends EventTarget {
   get bufferedAmount(): number { return this.raw.bufferedAmount; }
   get extensions(): string { return this.raw.extensions; }
   get protocol(): string { return this.raw.protocol; }
-  get binaryType(): BinaryType { return this.raw.binaryType; }
-  set binaryType(type: BinaryType) { this.raw.binaryType = type; }
+  get binaryType(): WebSocket['binaryType'] { return this.raw.binaryType; }
+  set binaryType(type: WebSocket['binaryType']) { this.raw.binaryType = type; }
 
   send(data: string | ArrayBufferLike | Blob | ArrayBufferView): void {
     if (this.readyState !== WebSocket.OPEN) {
       throw new DOMException('Relay authentication is not complete', 'InvalidStateError');
     }
-    this.raw.send(data);
+    this.raw.send(data as Parameters<WebSocket['send']>[0]);
   }
 
   close(code?: number, reason?: string): void {
