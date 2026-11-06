@@ -344,54 +344,205 @@ fun SessionDetailScreen(vm: DroidViewModel, state: DroidState, id: String, onBac
     PermissionDialogs(vm, state)
 }
 
+private fun textFromPayload(value: Any?, depth: Int = 0): String {
+    if (depth > 5 || value == null || value == JSONObject.NULL) return ""
+    return when (value) {
+        is String -> value
+        is JSONArray -> (0 until value.length())
+            .map { textFromPayload(value.opt(it), depth + 1) }
+            .filter { it.isNotBlank() }.joinToString("\n")
+        is JSONObject -> {
+            val keys = listOf("text", "message", "content", "output", "result", "body",
+                "markdown", "summary", "description", "error")
+            val parts = keys.mapNotNull { key ->
+                if (value.has(key)) textFromPayload(value.opt(key), depth + 1)
+                    .takeIf { it.isNotBlank() } else null
+            }
+            if (parts.isEmpty()) "" else parts.distinct().joinToString("\n")
+        }
+        else -> value.toString()
+    }
+}
+
 @Composable
 private fun TranscriptCard(message: JSONObject) {
     val role = message.optString("role", message.optString("type", "message"))
     val content = message.opt("content")
-    val text = when (content) {
-        is String -> content
-        is JSONArray -> (0 until content.length()).joinToString("\n") { index ->
-            content.optJSONObject(index)?.optString("text")
-                ?: content.optString(index, "")
+    val body = textFromPayload(content).ifBlank {
+        textFromPayload(message.opt("text")).ifBlank {
+            textFromPayload(message.opt("message"))
         }
-        null -> message.optString("text", message.toString(2))
-        else -> content.toString()
     }
-    ElevatedCard(
-        colors = CardDefaults.elevatedCardColors(
-            containerColor = if (role == "user") MaterialTheme.colorScheme.primaryContainer
-                else MaterialTheme.colorScheme.surfaceContainer
-        ),
+    val tool = role.contains("tool", ignoreCase = true) ||
+        message.has("toolName") || message.has("toolUse")
+    val label = when {
+        role == "user" -> "You"
+        tool -> message.optString("toolName").ifBlank { "Tool activity" }
+        role == "assistant" -> "Droid"
+        else -> role.replaceFirstChar { it.uppercase() }
+    }
+    var expanded by remember(message) { mutableStateOf(false) }
+    val user = role == "user"
+
+    Surface(
+        shape = MaterialTheme.shapes.large,
+        color = when {
+            user -> MaterialTheme.colorScheme.primaryContainer
+            tool -> MaterialTheme.colorScheme.surfaceContainerLow
+            else -> MaterialTheme.colorScheme.surfaceContainer
+        },
         modifier = Modifier.fillMaxWidth()
     ) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(role.replaceFirstChar { it.uppercase() },
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.primary)
-            SelectionContainer {
-                Text(text, style = MaterialTheme.typography.bodyLarge)
+        Column(Modifier.padding(horizontal = 18.dp, vertical = if (tool) 12.dp else 16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(label, style = MaterialTheme.typography.labelLarge,
+                    color = if (user) MaterialTheme.colorScheme.onPrimaryContainer
+                        else MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.weight(1f))
+                if (tool || body.isBlank()) {
+                    TextButton(onClick = { expanded = !expanded }) {
+                        Text(if (expanded) "Hide details" else "Details")
+                    }
+                }
+            }
+            if (body.isNotBlank()) {
+                SelectionContainer {
+                    Text(
+                        body,
+                        style = if (tool) MaterialTheme.typography.bodyMedium
+                            else MaterialTheme.typography.bodyLarge,
+                        maxLines = if (tool && !expanded) 4 else Int.MAX_VALUE,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            } else if (!tool) {
+                Text("Non-text message", style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            if (expanded) {
+                SelectionContainer {
+                    Text(message.toString(2), style = MaterialTheme.typography.bodySmall,
+                        fontFamily = FontFamily.Monospace)
+                }
             }
         }
     }
 }
 
+private fun humanLabel(key: String): String =
+    key.replace(Regex("([a-z])([A-Z])"), "$1 $2")
+        .replace('_', ' ').replaceFirstChar { it.uppercase() }
+
 @Composable
 fun StructuredDataPanel(value: Any?) {
     if (value == null || value == JSONObject.NULL) {
-        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            CircularProgressIndicator()
+        DroidLoadingState("Loading details…")
+        return
+    }
+    if (value is String) {
+        Surface(color = MaterialTheme.colorScheme.surfaceContainerLow,
+            shape = MaterialTheme.shapes.large, modifier = Modifier.fillMaxWidth().padding(16.dp)) {
+            SelectionContainer {
+                Text(value, style = MaterialTheme.typography.bodyMedium,
+                    fontFamily = FontFamily.Monospace, modifier = Modifier.padding(16.dp))
+            }
         }
         return
     }
-    val text = when (value) {
-        is JSONObject -> value.toString(2)
-        is JSONArray -> value.toString(2)
-        else -> value.toString()
+    if (value is JSONObject) {
+        val failure = value.optBoolean("success", true).not()
+        if (failure) {
+            val reason = value.optString("unavailableMessage")
+                .ifBlank { value.optString("message", "This information is unavailable.") }
+            Column(Modifier.fillMaxSize().padding(18.dp)) {
+                InlineError(reason)
+                Text("No changes can be displayed for this workspace.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.padding(top = 12.dp))
+            }
+            return
+        }
     }
-    SelectionContainer {
-        Column(Modifier.verticalScroll(rememberScrollState()).padding(20.dp)) {
-            Text(text, fontFamily = FontFamily.Monospace,
-                style = MaterialTheme.typography.bodyMedium)
+    var raw by remember(value) { mutableStateOf(false) }
+    val fields: List<Pair<String, Any?>> = when (value) {
+        is JSONObject -> value.keys().asSequence().map { it to value.opt(it) }.toList()
+        is JSONArray -> (0 until value.length()).map { (it + 1).toString() to value.opt(it) }
+        else -> listOf("Value" to value)
+    }
+    val budget = (value as? JSONObject)?.optDouble("contextBudget", 0.0) ?: 0.0
+    val used = (value as? JSONObject)?.optDouble("usedTokens", 0.0) ?: 0.0
+    Column(
+        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())
+            .padding(DroidTokens.pagePadding),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        if (budget > 0) {
+            Surface(color = MaterialTheme.colorScheme.primaryContainer,
+                shape = MaterialTheme.shapes.extraLarge) {
+                Column(Modifier.fillMaxWidth().padding(20.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("Context usage", style = MaterialTheme.typography.titleLarge,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer)
+                    Text("${used.toLong().toString()} / ${budget.toLong()} tokens",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer)
+                    LinearProgressIndicator(
+                        progress = { (used / budget).toFloat().coerceIn(0f, 1f) },
+                        modifier = Modifier.fillMaxWidth(),
+                        color = MaterialTheme.colorScheme.primary,
+                        trackColor = MaterialTheme.colorScheme.surfaceContainerHigh
+                    )
+                }
+            }
+        }
+        Surface(shape = MaterialTheme.shapes.large,
+            color = MaterialTheme.colorScheme.surfaceContainerLow) {
+            Column {
+                fields.forEachIndexed { index, (key, item) ->
+                    val display = when (item) {
+                        is JSONObject -> textFromPayload(item)
+                            .ifBlank { "${item.length()} properties" }
+                        is JSONArray -> "${item.length()} items"
+                        JSONObject.NULL, null -> "—"
+                        else -> item.toString()
+                    }
+                    ListItem(
+                        colors = ListItemDefaults.colors(
+                            containerColor = MaterialTheme.colorScheme.surfaceContainerLow
+                        ),
+                        headlineContent = {
+                            Text(humanLabel(key), style = MaterialTheme.typography.titleSmall)
+                        },
+                        supportingContent = {
+                            Text(display, style = MaterialTheme.typography.bodyMedium,
+                                maxLines = 6, overflow = TextOverflow.Ellipsis)
+                        }
+                    )
+                    if (index != fields.lastIndex) {
+                        HorizontalDivider(
+                            modifier = Modifier.padding(horizontal = 16.dp),
+                            color = MaterialTheme.colorScheme.outlineVariant
+                        )
+                    }
+                }
+            }
+        }
+        TextButton(onClick = { raw = !raw }) {
+            Text(if (raw) "Hide technical details" else "View technical details")
+        }
+        if (raw) {
+            SelectionContainer {
+                Text(
+                    when (value) {
+                        is JSONObject -> value.toString(2)
+                        is JSONArray -> value.toString(2)
+                        else -> value.toString()
+                    },
+                    fontFamily = FontFamily.Monospace,
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
         }
     }
 }
