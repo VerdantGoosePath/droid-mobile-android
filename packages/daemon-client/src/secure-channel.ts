@@ -360,9 +360,9 @@ export class SecureRpcChannel {
       if (!plaintext || plaintext.tag === sodium.crypto_secretstream_xchacha20poly1305_TAG_FINAL)
         throw new Error('Encrypted record rejected or stream finalized');
       return plaintext.message;
-    } catch {
-      this.destroy();
-      throw new Error('Secure-channel record authentication failed');
+    } catch (error) {
+      try { this.destroy(); } catch { /* always report the authentication failure */ }
+      throw new Error('Secure-channel record authentication failed', { cause: error });
     }
   }
 
@@ -375,7 +375,7 @@ export class SecureRpcChannel {
     if (this.rxKey) sodium.memzero(this.rxKey);
     this.ephemeralPrivate = this.txKey = this.rxKey = null;
     this.transmitHeader = null;
-    // libsodium-wrappers owns the opaque secretstream state; free if a byte buffer.
+    // The CLI's native secretstream state is a WASM pointer: erase before free.
     const receiveState = this.rxState;
     const transmitState = this.txState;
     this.txState = this.rxState = null;
