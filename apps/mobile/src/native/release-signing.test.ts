@@ -36,6 +36,23 @@ describe('release signing configuration', () => {
     expect(appGradle).not.toMatch(/signingConfigs\.debug/);
   });
 
+  it('requires permanent signing secrets and excludes pull requests from the signed job', () => {
+    const workflow = read('.github', 'workflows', 'android-apk.yml');
+    expect(workflow).toContain("if: github.event_name != 'pull_request'");
+    for (const secret of [
+      'DROID_RELEASE_KEYSTORE_B64',
+      'DROID_RELEASE_STORE_PASSWORD',
+      'DROID_RELEASE_KEY_ALIAS',
+      'DROID_RELEASE_KEY_PASSWORD',
+    ]) {
+      expect(workflow).toContain(`secrets.${secret}`);
+    }
+    expect(workflow).toContain('All four DROID_RELEASE_* repository secrets are required');
+    expect(workflow).not.toContain('ci-ephemeral');
+    expect(workflow).toContain('if: always()');
+    expect(workflow).toContain('rm -rf "$RUNNER_TEMP/droid-signing"');
+  });
+
   it('keeps signing material and Firebase config out of git', () => {
     const ignored = [
       'secrets/release.keystore',

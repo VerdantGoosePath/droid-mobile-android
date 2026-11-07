@@ -4,15 +4,11 @@ This fork connects Droid Mobile to an existing `droid daemon --remote-control`
 through Factory's hosted WebSocket relay. No Tailscale, reverse proxy,
 LAN port forwarding, inbound firewall rule, or PC helper is needed.
 
-> **Experimental and not yet live-verified:** the relay and secure-channel
-> implementation was reconstructed from both distributed Droid CLI binaries
-> and the publicly documented Factory Computers API. It now implements the
-> pinned X25519 Noise NK handshake and XChaCha20-Poly1305 secretstream
-> instead of sending plaintext daemon RPC across the relay. Independent
-> protocol test vectors exercise the cryptographic transcript and rejection
-> paths. This is **not proof of end-to-end compatibility** with a running
-> Factory account or endorsement by Factory. Do not use for sensitive
-> repositories until a real-device interoperability test and security review.
+> **Experimental:** the secure channel has now been checked against preserved
+> Linux and Windows CLI responder implementations and live remote connections
+> to both operating systems. See the [protocol audit](relay-protocol-audit.md)
+> for the key-derivation repair, full pairing sequence and validation limits.
+> A physical Android phone connection smoke test is still outstanding.
 
 ## On the PC
 
@@ -38,7 +34,8 @@ Android app. Factory's API returns a separate `relayClientUrl` for clients.
 Alternatively, paste the `wss://relay.factory.ai/v0/computer/…/agent` address
 shown by the CLI directly into the URL field. The app recognises the Factory
 relay host and converts `/agent` to `/client`. It never puts the API key in the
-URL. This alternative skips the list UI but still requires the authenticated\ncomputer-detail API for cryptographic identity verification.
+URL. This alternative skips the list UI but still requires the authenticated
+computer-detail API for cryptographic identity verification.
 
 The connection remains dependent on your PC staying online and keeping
 `droid daemon --remote-control` running.
@@ -75,17 +72,17 @@ identity is absent/mismatched, the connection is refused.
 ## Build and signing
 
 `.github/workflows/android-apk.yml` builds a **release-variant** APK and
-verifies its signature. The default CI key is **ephemeral**: install it as a
-fresh app; future runs will have different signing certificates and require
-uninstall/reinstall, which discards application data.
-
-For stable upgrade-compatible APKs, configure these four GitHub Actions
-repository secrets before rerunning the build:
+verifies its signature using the permanent repository signing key. The signed
+job runs only on trusted push/manual events and requires all four signing secrets:
 
 - `DROID_RELEASE_KEYSTORE_B64`: base64-encoded persistent Android JKS file
 - `DROID_RELEASE_STORE_PASSWORD`: keystore password
 - `DROID_RELEASE_KEY_ALIAS`: signing key alias
 - `DROID_RELEASE_KEY_PASSWORD`: key password
+
+These secrets are configured for this fork. Missing signing configuration fails
+the build; there is no temporary-key fallback. See [release.md](release.md) for
+the WSL signing location and local build instructions.
 
 Store the actual signing key in a private password manager or secure backup,
 **never** in the repository. Reuse the same JKS on every release.
