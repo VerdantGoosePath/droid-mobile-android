@@ -6,7 +6,8 @@ import type { PinnedComputerIdentity } from './secure-channel';
 /**
  * Loopback fake of the relay + computer. Unlike relay.test.ts, this test does
  * NOT mock the secure-channel module: the full Noise/secretstream wire traffic
- * is checked against keys independently derived with Python cryptography.
+ * is checked against keys verified with the actual CLI responder.
+ * See tools/dev/check-cli-secure-channel.mjs and docs/relay-protocol-audit.md.
  */
 const COMPUTER_ID = 'a34547ea-065c-43a9-857e-56e5a73a91f0';
 const CLIENT_ID = 'b34547ea-065c-43a9-857e-56e5a73a91f0';
@@ -18,8 +19,8 @@ const PIN: PinnedComputerIdentity = {
 };
 const CLIENT_HELLO = 'D6poTtKIZ7l_Smot7l34zpdOdrcBjj8iocTPJnhXDyBDE_uHcn6BliivPx-6NPzI';
 const SERVER_HELLO = 'ew1H2TQn-DERYHgcfHM_2J-IlwrvSQ2KoO4ZpMuKGxQttS66xpDu2iBqBnrCaDEq';
-const CLIENT_TX_KEY = '8af1a9acd701075bc06a015017badb3324bf4326bc72d4d386a0e8c94d8e9568';
-const CLIENT_RX_KEY = '0074155e51693b11c7edfeaeb967c358d95f9078e8af2a60e8bca4c0a8b89c13';
+const CLIENT_TX_KEY = '8782383c1299dc8229e302ba30a64aeb7cf17b268cc10324a23fd9237e3acb0d';
+const CLIENT_RX_KEY = 'b18a706f4845eac27479727a138c9013cfe02bffec9bd1f3dfc74cb2bd049052';
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 

@@ -40,10 +40,10 @@ all JSON-RPC messages with libsodium XChaCha20-Poly1305 secretstream.
 Missing identity, handshake rejection, malformed records or plaintext after
 authentication abort the connection; there is no insecure fallback.
 
-This implementation has been checked against protocol logic in the distributed
-Droid CLI binaries and independent cryptographic vectors, but a **live
-authenticated end-to-end test is still required** before using it for
-sensitive repositories. Factory operates the relay and identity API; the
+This implementation has been checked against the cryptographic responders in
+three preserved Linux/Windows CLI binaries and live authenticated connections
+to both operating systems. The [protocol audit](relay-protocol-audit.md) records
+the tests and remaining physical-phone validation limit. Factory operates the relay and identity API; the
 implementation does not claim security against malicious or compromised
 Factory account/API services that provide a substituted computer identity.
 The app's API key remains stored using Android secure storage.

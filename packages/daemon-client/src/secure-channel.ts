@@ -130,7 +130,9 @@ class NoiseState {
   split(): { transmit: Uint8Array; receive: Uint8Array } {
     const [a, b] = hkdf(this.chainingKey, empty);
     const derive = (key: Uint8Array, direction: string) => {
-      const first = hmac(key, this.hash);
+      // Factory binds Split output with HKDF-Extract(salt=handshakeHash, IKM=key).
+      // Reversing these HMAC arguments still completes Noise but breaks every record.
+      const first = hmac(this.hash, key);
       try {
         return hmac(first, join(encoder.encode(CHANNEL_LABEL + '/secretstream/' + direction), Uint8Array.of(1)));
       } finally {

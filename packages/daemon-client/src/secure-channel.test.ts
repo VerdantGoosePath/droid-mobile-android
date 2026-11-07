@@ -5,8 +5,9 @@ import {
 } from './secure-channel';
 import type { PinnedComputerIdentity, SecureContext } from './secure-channel';
 
-// Independent protocol vectors computed with Python cryptography 46.0.4:
-// X25519, HMAC-SHA256, Noise_NK, ChaCha20Poly1305 and BLAKE2b-128.
+// Noise transcript originally computed with Python cryptography. Session keys
+// corrected and verified against the actual preserved Linux and Windows CLI
+// responders by tools/dev/check-cli-secure-channel.mjs (see docs/relay-protocol-audit.md).
 // Client ephemeral scalar 0x22*32, server ephemeral 0x33*32,
 // static server scalar 0x11*32. No value is an actual Factory credential.
 const COMPUTER_ID = 'a34547ea-065c-43a9-857e-56e5a73a91f0';
@@ -21,8 +22,8 @@ const CLIENT_HELLO =
   'D6poTtKIZ7l_Smot7l34zpdOdrcBjj8iocTPJnhXDyBDE_uHcn6BliivPx-6NPzI';
 const SERVER_HELLO =
   'ew1H2TQn-DERYHgcfHM_2J-IlwrvSQ2KoO4ZpMuKGxQttS66xpDu2iBqBnrCaDEq';
-const CLIENT_TX_KEY = '8af1a9acd701075bc06a015017badb3324bf4326bc72d4d386a0e8c94d8e9568';
-const CLIENT_RX_KEY = '0074155e51693b11c7edfeaeb967c358d95f9078e8af2a60e8bca4c0a8b89c13';
+const CLIENT_TX_KEY = '8782383c1299dc8229e302ba30a64aeb7cf17b268cc10324a23fd9237e3acb0d';
+const CLIENT_RX_KEY = 'b18a706f4845eac27479727a138c9013cfe02bffec9bd1f3dfc74cb2bd049052';
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 const asFrame = (record: object) => encoder.encode(JSON.stringify(record));
