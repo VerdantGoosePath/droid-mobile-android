@@ -184,3 +184,7 @@ export type {
 } from './mission';
 export type { MissionSource } from './mission-source';
 export type { MissionFeature, MissionSnapshot, ProgressLogEntry } from '@factory/droid-sdk';
+
+export { factoryRelayTarget } from './relay';
+
+export type { PinnedComputerIdentity } from './secure-channel';

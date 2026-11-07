@@ -29,9 +29,9 @@
     "versionWarning": "Nepotrivire de protocol: daemonul folosește {{peer}}, iar aplicația așteaptă {{local}}. Unele apeluri pot eșua."
   },
   "connect": {
-    "title": "Conectare la daemon",
-    "description": "Introdu URL-ul daemonului și cheia API Factory.",
-    "urlLabel": "URL daemon",
+    "title": "Conectare la Factory Remote Control",
+    "description": "Introdu cheia API Factory și găsește computerul înregistrat, sau lipește URL-ul /agent afișat de droid daemon --remote-control. Nu este necesar Tailscale.",
+    "urlLabel": "URL Factory relay /agent sau /client",
     "savedConnection": "Conexiune salvată: {{label}} ({{url}}). Introdu cheia API pentru a te reconecta.",
     "keyLabel": "Cheie API",
     "submit": "Conectare",
@@ -53,7 +53,12 @@
     "errorUrlFormat": "Introdu o adresă de daemon care începe cu ws:// sau wss://.",
     "errorInsecure": "Această versiune se conectează doar prin wss://. Folosește o adresă securizată.",
     "errorKeyRejected": "Daemonul a respins această cheie API. Verifică cheia și încearcă din nou.",
-    "errorUnreachable": "Nu s-a putut ajunge la un daemon droid la această adresă. Verifică adresa și că daemonul rulează."
+    "errorUnreachable": "Nu s-a putut ajunge la un daemon droid la această adresă. Verifică adresa și că daemonul rulează.",
+    "findComputers": "Găsește computerele înregistrate",
+    "findingComputers": "Se caută computerele…",
+    "computersError": "Nu s-au putut încărca computerele Factory. Verifică cheia API și conexiunea.",
+    "computersList": "Computere Factory înregistrate",
+    "relaySecurityNote": "Factory Remote Control folosește un canal criptat cap-la-cap, cu identitatea X25519 verificată a computerului. Această integrare rămâne experimentală până la testarea cu un dispozitiv real."
   },
   "pairLink": {
     "title": "Te asociezi cu acest daemon?",

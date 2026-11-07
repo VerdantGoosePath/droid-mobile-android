@@ -1,7 +1,7 @@
 {
   "name": "@droidmobile/mobile",
-  "version": "1.0.1",
-  "androidVersionCode": 2,
+  "version": "1.0.2",
+  "androidVersionCode": 3,
   "private": true,
   "license": "Apache-2.0",
   "type": "module",

@@ -24,6 +24,30 @@
 - The daemon itself listens on `127.0.0.1` without TLS. Never bind it to a public or LAN address;
   reach it through Tailscale Serve, which adds TLS.
 
+## Factory Remote Control (experimental fork)
+
+This fork also supports the existing Factory-hosted Remote Control relay, without
+Tailscale or an inbound server port. The supported form is the computer's
+`wss://relay.factory.ai/v0/computer/<uuid>/client` (or the EU hostname).
+The CLI's printed `/agent` URL is converted to `/client`.
+
+**A relay URL is not an authentication or encryption key.** Every connection
+must retrieve the registered computer's pinned X25519 identity from Factory's
+authenticated HTTPS Computers API, verify the key fingerprint, authenticate
+to the relay with the user's Factory API key, obtain the relay's client ID,
+complete a Noise_NK_25519_ChaChaPoly_SHA256 handshake, then encrypt
+all JSON-RPC messages with libsodium XChaCha20-Poly1305 secretstream.
+Missing identity, handshake rejection, malformed records or plaintext after
+authentication abort the connection; there is no insecure fallback.
+
+This implementation has been checked against the cryptographic responders in
+three preserved Linux/Windows CLI binaries and live authenticated connections
+to both operating systems. The [protocol audit](relay-protocol-audit.md) records
+the tests and remaining physical-phone validation limit. Factory operates the relay and identity API; the
+implementation does not claim security against malicious or compromised
+Factory account/API services that provide a substituted computer identity.
+The app's API key remains stored using Android secure storage.
+
 ## Tailnet exposure
 
 Tailscale Serve publishes the daemon to your tailnet, not to the internet. Every device and

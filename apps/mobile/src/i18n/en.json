@@ -29,9 +29,9 @@
     "versionWarning": "Protocol mismatch: the daemon speaks {{peer}} while this app expects {{local}}. Some calls may fail."
   },
   "connect": {
-    "title": "Connect to your daemon",
-    "description": "Enter the daemon URL and your Factory API key.",
-    "urlLabel": "Daemon URL",
+    "title": "Connect to Factory Remote Control",
+    "description": "Enter your Factory API key and find your registered computer, or paste the /agent URL printed by droid daemon --remote-control. No Tailscale is needed.",
+    "urlLabel": "Factory relay /agent or /client URL",
     "savedConnection": "Saved connection: {{label}} ({{url}}). Enter its API key to reconnect.",
     "keyLabel": "API key",
     "submit": "Connect",
@@ -53,7 +53,12 @@
     "errorUrlFormat": "Enter a daemon address that starts with ws:// or wss://.",
     "errorInsecure": "This build only connects over wss://. Use a secure address.",
     "errorKeyRejected": "The daemon rejected this API key. Check the key and try again.",
-    "errorUnreachable": "Could not reach a droid daemon at this address. Check the URL and that the daemon is running."
+    "errorUnreachable": "Could not reach a droid daemon at this address. Check the URL and that the daemon is running.",
+    "findComputers": "Find registered computers",
+    "findingComputers": "Finding computers…",
+    "computersError": "Could not retrieve your registered Factory computers. Check your API key and connection.",
+    "computersList": "Registered Factory computers",
+    "relaySecurityNote": "Factory Remote Control uses an end-to-end encrypted secure channel with the computer's verified X25519 identity. This integration remains experimental until a live-device interoperability test."
   },
   "pairLink": {
     "title": "Pair with this daemon?",

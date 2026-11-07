@@ -1,0 +1,112 @@
+name: Android APK (signed)
+
+on:
+  push:
+    branches: [main, feat/factory-relay-remote-control]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: apk-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  android-release:
+    name: Build and verify installable release APK
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      # ubuntu-latest already provides the Android SDK. The setup-android@v3
+      # action tries to install the removed legacy 'tools' package on this image.
+      - name: Ensure Android API 36 and build tools
+        shell: bash
+        run: |
+          sdkmanager_bin="$(find "${ANDROID_HOME:-/usr/local/lib/android/sdk}/cmdline-tools" -type f -name sdkmanager | sort -V | tail -1)"
+          test -n "$sdkmanager_bin"
+          yes | "$sdkmanager_bin" --licenses >/dev/null || true
+          "$sdkmanager_bin" 'platforms;android-36' 'build-tools;36.0.0'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check secure relay TypeScript types
+        run: npm run typecheck
+
+      - name: Verify encrypted channel and relay tests
+        run: npx vitest run --project unit packages/daemon-client/src/secure-channel.test.ts packages/daemon-client/src/relay.test.ts packages/daemon-client/src/relay-end-to-end.test.ts
+
+      - name: Compile production web app
+        env:
+          VITE_DROID_BUILD: release
+        run: npm run build -w @droidmobile/mobile
+
+      - name: Synchronize release Capacitor configuration
+        env:
+          CAPACITOR_VARIANT: release
+        working-directory: apps/mobile
+        run: npx cap sync android
+
+      - name: Configure release signing
+        shell: bash
+        env:
+          KEYSTORE_B64: ${{ secrets.DROID_RELEASE_KEYSTORE_B64 }}
+          STORE_PASSWORD: ${{ secrets.DROID_RELEASE_STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.DROID_RELEASE_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.DROID_RELEASE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          signing_dir="$RUNNER_TEMP/droid-signing"
+          mkdir -p "$signing_dir"
+          if [[ -z "$KEYSTORE_B64" || -z "$STORE_PASSWORD" || -z "$KEY_ALIAS" || -z "$KEY_PASSWORD" ]]; then
+            echo '::error::All four DROID_RELEASE_* repository secrets are required for release signing.'
+            exit 1
+          fi
+          printf '%s' "$KEYSTORE_B64" | base64 --decode > "$signing_dir/release.jks"
+          {
+            echo 'storeFile=release.jks'
+            printf 'storePassword=%s\n' "$STORE_PASSWORD"
+            printf 'keyAlias=%s\n' "$KEY_ALIAS"
+            printf 'keyPassword=%s\n' "$KEY_PASSWORD"
+          } > "$signing_dir/keystore.properties"
+          chmod 600 "$signing_dir/"*
+          echo "DROID_KEYSTORE_PROPERTIES=$signing_dir/keystore.properties" >> "$GITHUB_ENV"
+
+      - name: Assemble release APK
+        working-directory: apps/mobile/android
+        run: bash ./gradlew --no-daemon assembleRelease
+
+      - name: Verify APK signature
+        shell: bash
+        run: |
+          set -euo pipefail
+          apk=apps/mobile/android/app/build/outputs/apk/release/app-release.apk
+          test -s "$apk"
+          apksigner_bin="$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -1)"
+          test -x "$apksigner_bin"
+          "$apksigner_bin" verify --verbose --print-certs "$apk" | sed -E 's/(Signer #1 certificate SHA-256 digest:).*/\1 [redacted]/'
+
+      - name: Upload installable APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: droid-mobile-release-${{ github.run_number }}
+          path: apps/mobile/android/app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Remove release signing material
+        if: always()
+        shell: bash
+        run: rm -rf "$RUNNER_TEMP/droid-signing"

@@ -7,6 +7,7 @@ import {
 } from '../app/connectionManager';
 import type { ConnectionManager, ConnectionManagerState } from '../app/connectionManager';
 import { checkDaemonUrl } from '../features/connect/validation';
+import { getFactoryComputerIdentity } from '../features/connect/computers';
 import { logFailure } from '../diagnostics/failures';
 import { appLog } from '../diagnostics/logBuffer';
 import { useInteractionStore } from './interactions';
@@ -78,6 +79,7 @@ export const useConnectionStore = create<ConnectionStore>((set) => {
     createConnection: (options) =>
       createDaemonConnection({
         ...options,
+        resolveRelayIdentity: getFactoryComputerIdentity,
         permissionHandler: (sessionId, request, generation) =>
           useInteractionStore.getState().requestPermission(sessionId, request, generation),
         askUserHandler: (sessionId, request, generation) =>

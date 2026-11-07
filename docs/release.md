@@ -1,7 +1,7 @@
 # Release and signing
 
-Droid Mobile is an unofficial client. Release builds are signed with a key you generate locally;
-nothing here uploads anything.
+Droid Mobile is an unofficial client. Release builds must use the same signing key to support
+in-place updates.
 
 ## Build with one command
 
@@ -27,6 +27,44 @@ plus Node 24 and `npm install`. Both version fields live in `apps/mobile/package
 `androidVersionCode` there before every Play Store upload; installing a build over an installed one
 with `adb install -r` keeps the saved connections as long as the keystore and the `versionCode`
 direction (equal or higher) allow it.
+
+## WSL and GitHub Actions signing
+
+The permanent release key for this checkout is stored outside the repository at
+`/home/elliott/.local/share/droid-mobile-signing/release.jks`, with its credentials in
+`/home/elliott/.local/share/droid-mobile-signing/keystore.properties`. The directory is private
+(mode 700) and both files are private (mode 600). Back up both files securely outside this machine;
+losing either the key or its credentials prevents updates signed with this identity. Never commit
+or share these files or their passwords.
+
+For a local WSL build, set `DROID_KEYSTORE_PROPERTIES` to the absolute path of that properties
+file. The signed GitHub Actions job requires repository secrets `DROID_RELEASE_KEYSTORE_B64`
+(the base64-encoded JKS), `DROID_RELEASE_STORE_PASSWORD`, `DROID_RELEASE_KEY_ALIAS`, and
+`DROID_RELEASE_KEY_PASSWORD`. It fails if any are missing and removes its temporary signing files
+at the end of the job. Pull requests do not run the signed job or receive its signing secrets.
+Use the same key for every release intended to update an existing installation.
+
+The four secrets are configured on `VerdantGoosePath/droid-mobile-android`.
+The public certificate SHA-256 is
+`88:2A:EC:87:DC:E1:63:2D:0D:11:D3:BE:60:1C:71:06:AF:01:F1:55:47:A6:FE:64:2B:5D:57:EC:6A:85:7A:DA`.
+
+Build from the repository root in WSL with Node 24 and JDK 21 on `PATH`:
+
+```sh
+export ANDROID_HOME="$HOME/Android/Sdk"
+export DROID_KEYSTORE_PROPERTIES="$HOME/.local/share/droid-mobile-signing/keystore.properties"
+npm ci
+VITE_DROID_BUILD=release npm run build -w @droidmobile/mobile
+(cd apps/mobile && CAPACITOR_VARIANT=release npx cap sync android)
+bash apps/mobile/android/gradlew -p apps/mobile/android --no-daemon assembleRelease
+"$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs \
+  apps/mobile/android/app/build/outputs/apk/release/app-release.apk
+```
+
+This fork's version 1.0.2 (version code 3) starts the permanent signing identity.
+Earlier temporary-key builds must be uninstalled once before installing it;
+subsequent builds signed with this key can update in place.
+
 
 ## Keystore creation
 
